@@ -1,0 +1,25 @@
+{
+  "name": "@donelayer/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "setup": "tsx src/cli.ts setup",
+    "start": "tsx src/cli.ts start",
+    "status": "tsx src/cli.ts status",
+    "logout": "tsx src/cli.ts logout",
+    "doctor": "tsx src/cli.ts doctor"
+  },
+  "dependencies": {
+    "@donelayer/agent-adapters": "0.1.0",
+    "@donelayer/worker-protocol": "0.1.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

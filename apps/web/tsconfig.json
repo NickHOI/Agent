@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "incremental": true,
+    "noEmit": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@donelayer/shared": ["../../packages/shared/src/index.ts"],
+      "@donelayer/task-state-machine": ["../../packages/task-state-machine/src/index.ts"],
+      "@donelayer/matching": ["../../packages/matching/src/index.ts"],
+      "@donelayer/proof-of-done": ["../../packages/proof-of-done/src/index.ts"],
+      "@donelayer/database": ["../../packages/database/src/index.ts"],
+      "@donelayer/worker-protocol": ["../../packages/worker-protocol/src/index.ts"],
+      "@donelayer/agent-adapters": ["../../packages/agent-adapters/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

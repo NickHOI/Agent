@@ -1,0 +1,16 @@
+{
+  "name": "@donelayer/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@donelayer/shared": "0.1.0",
+    "@donelayer/task-state-machine": "0.1.0",
+    "@donelayer/matching": "0.1.0",
+    "@donelayer/proof-of-done": "0.1.0",
+    "zod": "^4.0.0"
+  }
+}

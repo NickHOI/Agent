@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "paths": {
+      "@/*": ["./apps/web/src/*"],
+      "@donelayer/shared": ["./packages/shared/src/index.ts"],
+      "@donelayer/task-state-machine": ["./packages/task-state-machine/src/index.ts"],
+      "@donelayer/matching": ["./packages/matching/src/index.ts"],
+      "@donelayer/proof-of-done": ["./packages/proof-of-done/src/index.ts"],
+      "@donelayer/database": ["./packages/database/src/index.ts"],
+      "@donelayer/worker-protocol": ["./packages/worker-protocol/src/index.ts"],
+      "@donelayer/agent-adapters": ["./packages/agent-adapters/src/index.ts"]
+    }
+  }
+}

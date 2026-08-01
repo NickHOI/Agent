@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+playwright-report/
+test-results/
+.data/
+data/
+*.log
+.env
+.env.local
+.env.*.local
+!.env.example
+apps/worker/.doneworker/
+

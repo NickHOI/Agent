@@ -1,0 +1,53 @@
+{
+  "name": "donelayer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Proof-driven marketplace for completing software projects.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "next": {
+      ".": "$next",
+      "postcss": "8.5.25",
+      "sharp": "0.35.0"
+    }
+  },
+  "engines": {
+    "node": ">=24.15.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @donelayer/web",
+    "build": "npm run build --workspace @donelayer/web && npm run build --workspace @donelayer/worker",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.check.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build --workspace @donelayer/web && playwright test",
+    "worker:setup": "npm run setup --workspace @donelayer/worker --",
+    "worker:start": "npm run start --workspace @donelayer/worker --",
+    "worker:status": "npm run status --workspace @donelayer/worker --",
+    "worker:logout": "npm run logout --workspace @donelayer/worker --",
+    "worker:doctor": "npm run doctor --workspace @donelayer/worker --"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@next/eslint-plugin-next": "16.2.12",
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.0",
+    "next": "16.2.12",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vitest": "4.1.10"
+  }
+}
