@@ -4,6 +4,33 @@
 
 DoneLayer 是一個以驗證為核心的軟件任務市場 MVP。Customer 提交有明確範圍的 Repository 任務，平台分析需求並配對 Agent，Provider 接受後由 outbound-only Worker 執行，最後由獨立的 Proof-of-Done 模組驗證證據。Agent 說「完成」並不會直接令任務變成 `COMPLETED`。
 
+Canonical product documents:
+
+- [Product North Star](docs/PRODUCT_NORTH_STAR.md)
+- [Long-term Product Roadmap](docs/PRODUCT_ROADMAP.md)
+- [Current Phase and authorized boundary](docs/CURRENT_PHASE.md)
+- [Gate 4 Real Corpus Ramp](docs/GATE_4_REAL_CORPUS_RAMP.md)
+- [Current Architecture reality view](CURRENT_ARCHITECTURE.md)
+
+`docs/PRODUCT_ROADMAP.md` is the canonical long-term roadmap. DoneLayer's first
+product wedge is Verified Work: an Agent saying "Done" is not sufficient without
+independent outcome evidence. The broader destination spans task-scoped
+Authority, Identity, evidence-based Reputation, controlled Payments, settlement,
+and organizational trust. The platform remains off-chain first and independent
+of tokens or blockchains. Roadmap items are not implementation claims.
+
+Gate 4 now uses a staged Real Corpus ramp: first one externally accepted genuine
+Real Verified Job, then at least five across two task types with negative
+controls, then at least twenty plus a Reputation Readiness Review. Phase 4
+Reputation starts only after all three corpus-entry Gates pass.
+
+The bounded Agent Identity V1 Gate now adds an opaque internal Agent ID,
+append-only profile revisions, a distinct execution identity, and coherent
+Work Contract, Permission Lease, Evidence, and Receipt bindings. ERC-8004 and
+HOL/UAID remain optional typed references only; no live external identity,
+blockchain, token, or Reputation integration is claimed. See
+`AGENT_IDENTITY_INTEROPERABILITY_V1_REPORT.md` for the exact evidence boundary.
+
 本專案預設使用完全本機的 Demo Mode。沒有 Supabase、GitHub App、Codex CLI、Docker、Stripe、A2A Agent 或 MCP server，仍可展示以下完整流程：
 
 ```text
@@ -38,7 +65,7 @@ Windows PowerShell 若禁止執行 `npm.ps1`，請把以下所有 `npm` 改為 `
 
 ## 五分鐘啟動
 
-在本專案根目錄 `C:\Users\user\Documents\Agent` 執行：
+在本專案根目錄 `<repo-root>` 執行：
 
 ```powershell
 npm install
@@ -202,13 +229,13 @@ Webhook URL 為：
 https://YOUR-DOMAIN/api/webhooks/github
 ```
 
-完整的 permissions、events、private key、selected repositories 和 signature 步驟見 [docs/github-app-setup.md](docs/github-app-setup.md)。GitHub installation OAuth、真實 clone/branch/PR delivery 尚未接通完整產品流程，未設定時應繼續使用 Demo Repository。
+完整的 permissions、events、private key、selected repositories 和 signature 步驟見 [docs/github-app-setup.md](docs/github-app-setup.md)。一個 owner-controlled public Fixture 已用 development GitHub identity 完成真實 clone、branch、Commit、open PR 與 fresh-Sandbox independent verification；這不等於 production GitHub App installation、任意 Customer repository access 或 general delivery 已接通。
 
 ## Supabase
 
-`supabase/migrations/20260731235500_initial_schema.sql` 提供 production-oriented PostgreSQL schema，包括外鍵、constraints、indexes、transactional functions、RLS、explicit Data API grants 和私人 Evidence Storage policy。`supabase/seed.sql` 提供相應 Demo fixtures。
+`supabase/migrations/20260731235500_initial_schema.sql` 提供 production-oriented PostgreSQL schema，包括外鍵、constraints、indexes、transactional functions、RLS、explicit Data API grants 和私人 Evidence Storage policy。`supabase/migrations/20260908141623_agent_identity_production_persistence_v1.sql` 再加入 append-only Agent Identity history、全域 external identity ownership 與 service-only 原子命令。`supabase/seed.sql` 提供相應 Demo fixtures。
 
-本 MVP 已有 Supabase Auth 的 server-side actor boundary，但目前完整任務服務仍使用本機 SQLite `DemoStore`。Supabase persistence/storage adapter 和 contract tests 尚未接通，因此請勿把 `APP_MODE=supabase` 視為可部署的 production backend。
+本 MVP 已有 Supabase Auth 的 server-side actor boundary，Agent 建立與 Agent Identity revision/link API 亦已接上受 RLS 保護的 Supabase/Postgres adapter 與 service-only 原子命令。其餘 Marketplace 任務服務仍使用本機 SQLite `DemoStore`；migration 尚未在連結的 Postgres 專案執行驗證，因此請勿把 `APP_MODE=supabase` 視為完整、可部署的 production backend。
 
 要檢視或在開發 Supabase 專案試跑 schema，可安裝 Supabase CLI，連接一個非 production project，再執行：
 
@@ -216,7 +243,7 @@ https://YOUR-DOMAIN/api/webhooks/github
 supabase db push
 ```
 
-在套用 migration 前應先由資料庫管理員審核，並確認備份、RLS、Auth role metadata 和 Storage bucket 設定。`SUPABASE_SERVICE_ROLE_KEY` 只能存在於伺服器 secret manager，永遠不能使用 `NEXT_PUBLIC_` 前綴，也不能交給 Worker 或瀏覽器。
+在套用 migration 前應先由資料庫管理員審核，並確認備份、RLS、Auth role metadata 和 Storage bucket 設定。優先使用 `SUPABASE_SECRET_KEY`；舊版 `SUPABASE_SERVICE_ROLE_KEY` 僅作相容 fallback。兩者都只能存在於伺服器 secret manager，永遠不能使用 `NEXT_PUBLIC_` 前綴，也不能交給 Worker 或瀏覽器。
 
 ## 測試與品質檢查
 
@@ -247,7 +274,7 @@ Playwright E2E 指令為：
 npm run test:e2e
 ```
 
-目前 lint、strict typecheck、13 個測試檔共 55 項 unit/integration/authorization tests、production build，以及 2 項 Playwright Chromium E2E 均已通過。另已完成 1280px desktop、390px mobile、重新整理持久化與零 console error 的 in-app browser walkthrough；完整紀錄見 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
+最近一次完整驗證為 lint、strict typecheck、35 個測試檔通過／4 個 live-gate 檔案 skipped、166 項 tests 通過／6 項 skipped，以及 Web 與 Worker production build 通過。歷史 Playwright 與 in-app browser walkthrough 及各 real Gate 的精確邊界見 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
 
 ## 安全邊界
 
@@ -289,7 +316,11 @@ tests/
   integration/          完整 Demo lifecycle
   authorization/        Customer、Provider、Worker、state protection
 docs/
+  PRODUCT_NORTH_STAR.md
+  PRODUCT_ROADMAP.md     Canonical long-term roadmap
+  CURRENT_PHASE.md       Current authorization and stop boundary
   architecture.md
+  adr/
   security.md
   threat-model.md
   worker-setup.md
@@ -311,7 +342,7 @@ docs/
 | A2AAdapter | Agent Card import/validation 和 interface skeleton | HTTPS Agent Card |
 | Test Ledger | 可用，模擬 balance/reserve/release/refund | 無 |
 | StripeConnectProvider | 只預留 feature flag/skeleton，不可用於真實付款 | 未接 |
-| GitHub App | Webhook security 和設定骨架 | 完整 installation/repository delivery 未接 |
+| GitHub App / Git delivery | Webhook security 和設定骨架；exact public Fixture 的 owner-development-auth delivery 已驗證 | Production App installation、general repository grants/PR delivery 未接 |
 | Supabase | Schema、RLS、seed、Auth boundary | Runtime persistence/storage adapter 未接 |
 
 ## 已知限制
@@ -319,10 +350,11 @@ docs/
 - Demo Store 是單一 Web process 使用的本機 SQLite，不適合多 instance 或 production concurrency。
 - Demo Executor 產生可重現的模擬 repository、diff、tests 和 Evidence；它不是外部 Agent。
 - Codex preview 尚未在本環境以真實 Codex CLI 和 container 執行端到端驗收。
-- 真實 GitHub installation、短期 installation token、clone、branch 和 Pull Request delivery 尚未完成。
+- Production GitHub App installation、短期 installation token、任意 Customer repository grant 和 generalized delivery 尚未完成；exact public Fixture 的 development-auth vertical slice 不應被泛化。
 - Supabase migration 尚未在本環境套用到真實 Supabase project。
 - Webhook Agent primitives 已完成，但未與外部 Provider endpoint 做 production interop test。
 - A2A 只支援 Agent Card discovery/validation，不支援完整 task protocol。
+- Agent Identity V1 目前是可驗證的 in-process profile/execution model；尚未接 production identity persistence、live ERC-8004/HOL linkage 或 legal identity verification。
 - MCP 只儲存 server/tool capability metadata，不代管 server 或 secrets。
 - Payment 是 Test Ledger，沒有真實收款、KYC、稅務或 payout。
 - Worker credential store 尚未整合 OS keychain。
@@ -335,6 +367,10 @@ docs/
 ## 進一步文件
 
 - [Architecture](docs/architecture.md)
+- [Product North Star](docs/PRODUCT_NORTH_STAR.md)
+- [Canonical Product Roadmap](docs/PRODUCT_ROADMAP.md)
+- [Current Phase](docs/CURRENT_PHASE.md)
+- [Current Architecture reality view](CURRENT_ARCHITECTURE.md)
 - [Security design](docs/security.md)
 - [Threat model](docs/threat-model.md)
 - [Worker setup](docs/worker-setup.md)

@@ -22,6 +22,13 @@ export function formatRelativeTime(value: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+export function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 export function humanize(value: string): string {
   return value
     .toLowerCase()

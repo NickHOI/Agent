@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
@@ -52,7 +52,12 @@ describe("Worker outbound API client", () => {
         os: "linux",
         architecture: "x64",
         cpuCount: 4,
+        nodeVersion: "v24.15.0",
+        npmVersion: "11.0.0",
+        workerVersion: "0.1.0",
+        processId: 1234,
         memoryBytes: 8_000_000_000,
+        availableMemoryBytes: 4_000_000_000,
         freeDiskBytes: 20_000_000_000,
         dockerAvailable: false,
         codexAvailable: false,
@@ -68,15 +73,80 @@ describe("Worker outbound API client", () => {
     expect(capturedHeaders.has("authorization")).toBe(false);
   });
 
-  it("rejects artifact uploads to a host outside the configured allowlist", async () => {
+  it("uploads to a relative same-origin URL with Worker and lease authentication", async () => {
     const workerId = randomUUID();
+    const artifactId = randomUUID();
+    const workerToken = "worker-token-that-is-at-least-thirty-two-characters";
+    const leaseToken = "lease-token-that-is-at-least-thirty-two-characters";
+    const bytes = new TextEncoder().encode("{}");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    let uploadUrl = "";
+    let uploadHeaders = new Headers();
+    let uploadBody: BodyInit | null | undefined;
+    const client = new WorkerApiClient(
+      "https://platform.example.com",
+      { workerId, workerToken },
+      async (input, init) => {
+        const url = input.toString();
+        if (url.endsWith("/artifacts/init")) {
+          return Response.json({
+            artifactId,
+            uploadUrl: `/api/worker/uploads/${artifactId}`,
+            uploadHeaders: {
+              authorization: "Bearer server-value-must-not-win",
+              "content-type": "application/octet-stream",
+              "x-donelayer-upload-token": "scoped-upload-token",
+            },
+          });
+        }
+        if (init?.method === "PUT") {
+          uploadUrl = url;
+          uploadHeaders = new Headers(init.headers);
+          uploadBody = init.body;
+          return new Response(null, { status: 204 });
+        }
+        return Response.json({
+          artifactId,
+          artifactType: "TEST_RESULT",
+          fileName: "test-results.json",
+          mimeType: "application/json",
+          size: bytes.byteLength,
+          sha256: digest,
+        });
+      },
+    );
+
+    await expect(
+      client.uploadArtifact(
+        randomUUID(),
+        leaseToken,
+        {
+          artifactType: "TEST_RESULT",
+          fileName: "test-results.json",
+          mimeType: "application/json",
+          bytes,
+        },
+      ),
+    ).resolves.toMatchObject({ artifactId, sha256: digest });
+    expect(uploadUrl).toBe(`https://platform.example.com/api/worker/uploads/${artifactId}`);
+    expect(uploadHeaders.get("authorization")).toBe(`Bearer ${workerToken}`);
+    expect(uploadHeaders.get("content-type")).toBe("application/json");
+    expect(uploadHeaders.get("x-donelayer-lease-token")).toBe(leaseToken);
+    expect(uploadHeaders.get("x-donelayer-upload-token")).toBe("scoped-upload-token");
+    expect(uploadHeaders.get("x-donelayer-worker-id")).toBe(workerId);
+    expect(Buffer.from(uploadBody as Uint8Array)).toEqual(Buffer.from(bytes));
+  });
+
+  it("rejects artifact uploads to a different port on the API host", async () => {
+    const workerId = randomUUID();
+    const artifactId = randomUUID();
     const client = new WorkerApiClient(
       "https://platform.example.com",
       { workerId, workerToken: "worker-token-that-is-at-least-thirty-two-characters" },
       async () =>
         Response.json({
-          artifactId: randomUUID(),
-          uploadUrl: "https://untrusted-upload.example.net/object",
+          artifactId,
+          uploadUrl: `https://platform.example.com:444/api/worker/uploads/${artifactId}`,
           uploadHeaders: {},
         }),
     );
@@ -91,7 +161,34 @@ describe("Worker outbound API client", () => {
           bytes: new TextEncoder().encode("{}"),
         },
       ),
-    ).rejects.toThrow(/not allowlisted/);
+    ).rejects.toThrow(/origin is not allowlisted/);
+  });
+
+  it("rejects a same-origin URL outside the scoped upload path", async () => {
+    const workerId = randomUUID();
+    const artifactId = randomUUID();
+    const client = new WorkerApiClient(
+      "https://platform.example.com",
+      { workerId, workerToken: "worker-token-that-is-at-least-thirty-two-characters" },
+      async () =>
+        Response.json({
+          artifactId,
+          uploadUrl: `https://platform.example.com/api/worker/not-uploads/${artifactId}`,
+          uploadHeaders: {},
+        }),
+    );
+    await expect(
+      client.uploadArtifact(
+        randomUUID(),
+        "lease-token-that-is-at-least-thirty-two-characters",
+        {
+          artifactType: "TEST_RESULT",
+          fileName: "test-results.json",
+          mimeType: "application/json",
+          bytes: new TextEncoder().encode("{}"),
+        },
+      ),
+    ).rejects.toThrow(/path is invalid/);
   });
 
   it("applies a deadline even when the caller does not provide a signal", async () => {

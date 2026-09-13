@@ -3,6 +3,7 @@ import { getDemoStore } from "@donelayer/database";
 import { getActor } from "@/server/auth";
 import { assertSameOrigin, noStoreJson } from "@/server/http-security";
 import { enforceRateLimit } from "@/server/rate-limit";
+import { toTaskViewAggregate } from "@/server/task-view";
 
 const schema = z.object({ reason: z.string().trim().min(10).max(5000) }).strict();
 
@@ -19,7 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ taskId
   try {
     const store = getDemoStore();
     const dispute = store.openDispute(taskId, { kind: actor.role, id: actor.id }, parsed.data.reason);
-    return noStoreJson({ dispute, aggregate: store.getTaskAggregate(taskId) }, { status: 201 });
+    return noStoreJson({ dispute, aggregate: toTaskViewAggregate(store.getTaskAggregate(taskId)) }, { status: 201 });
   } catch (error) {
     return noStoreJson({ error: error instanceof Error ? error.message : "Unable to open dispute." }, { status: 409 });
   }

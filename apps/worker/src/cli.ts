@@ -10,9 +10,8 @@ import { WORKER_PROTOCOL_VERSION, redactSecrets } from "@donelayer/worker-protoc
 import { WorkerApiClient } from "./client.js";
 import { WorkerConfigStore } from "./config.js";
 import { runDoctor, type DoctorReport } from "./doctor.js";
-import { CodexCliExecutor } from "./executors/codex.js";
-import { DemoExecutor } from "./executors/demo.js";
-import type { JobExecutor } from "./executors/types.js";
+import { WorkerSmokeExecutor } from "./executors/worker-smoke.js";
+import { RepositoryMaterializerExecutor } from "./executors/repository-materializer.js";
 import { WorkerRuntime, defaultWorkspaceRoot } from "./runtime.js";
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -84,14 +83,12 @@ async function start(store: WorkerConfigStore, flags: Map<string, string>): Prom
   if (!config || !workerToken) throw new Error("Worker is not paired. Run doneworker setup first.");
   const report = await runDoctor({ apiUrl: config.apiUrl, workspacePath: store.directory });
   const client = new WorkerApiClient(config.apiUrl, { workerId: config.workerId, workerToken });
-  const executors: JobExecutor[] = [new DemoExecutor()];
-  if (report.healthyForCodex) executors.push(new CodexCliExecutor());
   const runtime = new WorkerRuntime({
     client,
     config,
     capabilities: report.capabilities,
     workspaceRoot: defaultWorkspaceRoot(store.directory),
-    executors,
+    executors: [new WorkerSmokeExecutor(), new RepositoryMaterializerExecutor()],
     onMessage: (message) => output.write(`${message}\n`),
   });
   const controller = new AbortController();
@@ -154,7 +151,7 @@ async function doctor(store: WorkerConfigStore, flags: Map<string, string>): Pro
   });
   if (booleanFlag(flags, "json")) output.write(`${JSON.stringify(report, null, 2)}\n`);
   else printDoctor(report);
-  return booleanFlag(flags, "strict") && !report.healthyForCodex ? 1 : 0;
+  return booleanFlag(flags, "strict") && !report.healthyForSmoke ? 1 : 0;
 }
 
 function printDoctor(report: DoctorReport): void {

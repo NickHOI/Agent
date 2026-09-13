@@ -7,8 +7,8 @@ import {
   CircleDollarSign,
   FileCheck2,
   Gauge,
+  History,
   LayoutDashboard,
-  Menu,
   Plus,
   ServerCog,
   ShieldCheck,
@@ -16,8 +16,10 @@ import {
   UsersRound
 } from "lucide-react";
 import { Brand } from "@/components/brand";
+import { MobileNavigation } from "@/components/mobile-navigation";
 import { ButtonLink } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { getActor } from "@/server/auth";
 
 type NavItem = { label: string; href: string; icon: typeof Gauge };
 
@@ -26,6 +28,13 @@ const customerNav: NavItem[] = [
   { label: "Tasks", href: "/tasks", icon: BriefcaseBusiness },
   { label: "Agent Hall", href: "/agents", icon: Store },
   { label: "Spending", href: "/customer#spending", icon: CircleDollarSign }
+];
+
+const workspaceNav: NavItem[] = [
+  { label: "Overview", href: "/customer", icon: LayoutDashboard },
+  { label: "Agents", href: "/agents", icon: Bot },
+  { label: "Work", href: "/tasks", icon: BriefcaseBusiness },
+  { label: "History", href: "/history", icon: History },
 ];
 
 const providerNav: NavItem[] = [
@@ -68,7 +77,7 @@ function NavGroup({ label, items, currentPath }: { label: string; items: NavItem
   );
 }
 
-export function AppShell({
+export async function AppShell({
   currentPath,
   title,
   eyebrow,
@@ -81,6 +90,9 @@ export function AppShell({
   children: ReactNode;
   actions?: ReactNode;
 }) {
+  const actor = await getActor();
+  const workspace = process.env.APP_MODE === "supabase";
+  const initials = actor?.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "DL";
   return (
     <div className="min-h-screen bg-[#090a0c] text-white">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[232px] border-r border-[#242831] bg-[#0d0f13] lg:flex lg:flex-col">
@@ -88,30 +100,34 @@ export function AppShell({
           <Brand />
         </div>
         <div className="flex-1 overflow-y-auto px-2 py-2">
-          <NavGroup label="Customer" items={customerNav} currentPath={currentPath} />
-          <NavGroup label="Provider" items={providerNav} currentPath={currentPath} />
-          <NavGroup label="Operations" items={adminNav} currentPath={currentPath} />
+          {workspace ? <NavGroup label="Trust workspace" items={workspaceNav} currentPath={currentPath} /> : (
+            <>
+              <NavGroup label="Customer" items={customerNav} currentPath={currentPath} />
+              <NavGroup label="Provider" items={providerNav} currentPath={currentPath} />
+              <NavGroup label="Operations" items={adminNav} currentPath={currentPath} />
+            </>
+          )}
         </div>
         <div className="border-t border-[#242831] p-3">
-          <Link href="/sign-in" className="focus-ring flex h-10 items-center justify-between rounded-[5px] px-2 hover:bg-[#171a20]">
+          <div className="flex h-11 items-center justify-between rounded-[5px] px-2">
             <span className="flex min-w-0 items-center gap-2.5">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-[5px] bg-[#1e4d32] text-xs font-bold text-[#8be29a]">ND</span>
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-[5px] bg-[#1e4d32] text-xs font-bold text-[#8be29a]">{initials}</span>
               <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold text-white">Nick Demo</span>
-                <span className="block truncate text-[11px] text-[#666e7a]">Customer</span>
+                <span className="block truncate text-xs font-semibold text-white">{actor?.name ?? "Signed out"}</span>
+                <span className="block truncate text-[11px] text-[#666e7a]">{workspace ? "Private Beta" : actor?.role ?? "Demo"}</span>
               </span>
             </span>
-            <ChevronDown className="size-3.5 text-[#666e7a]" aria-hidden="true" />
-          </Link>
+            {workspace ? (
+              <form action="/api/auth/sign-out" method="post"><button type="submit" className="focus-ring rounded-[4px] px-2 py-1 text-[11px] font-semibold text-[#969da8] hover:text-white">Sign out</button></form>
+            ) : <ChevronDown className="size-3.5 text-[#666e7a]" aria-hidden="true" />}
+          </div>
         </div>
       </aside>
 
       <div className="lg:pl-[232px]">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-[#242831] bg-[#0d0f13]/95 px-4 backdrop-blur md:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <button className="focus-ring flex size-9 items-center justify-center rounded-[5px] border border-[#343944] text-[#969da8] lg:hidden" aria-label="Open navigation">
-              <Menu className="size-4" />
-            </button>
+            <MobileNavigation workspace={workspace} />
             <div className="min-w-0">
               {eyebrow ? <div className="truncate text-[11px] font-semibold uppercase text-[#666e7a]">{eyebrow}</div> : null}
               <h1 className="truncate text-base font-semibold text-white">{title}</h1>
@@ -121,7 +137,7 @@ export function AppShell({
             {actions}
             <ButtonLink href="/tasks/new" size="sm">
               <Plus className="size-4" aria-hidden="true" />
-              <span className="hidden sm:inline">New task</span>
+              <span className="hidden sm:inline">{workspace ? "New work" : "New task"}</span>
             </ButtonLink>
           </div>
         </header>

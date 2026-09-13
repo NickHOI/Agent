@@ -11,6 +11,7 @@
     "@donelayer/task-state-machine": "0.1.0",
     "@donelayer/matching": "0.1.0",
     "@donelayer/proof-of-done": "0.1.0",
+    "@donelayer/worker-protocol": "0.1.0",
     "zod": "^4.0.0"
   }
 }

@@ -9,6 +9,7 @@
     "packages/*"
   ],
   "overrides": {
+    "nanoid": "3.3.18",
     "next": {
       ".": "$next",
       "postcss": "8.5.25",

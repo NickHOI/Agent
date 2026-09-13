@@ -10,6 +10,7 @@ import {
   Circle,
   CircleAlert,
   CircleDollarSign,
+  ClipboardCheck,
   Clock3,
   Code2,
   Download,
@@ -18,8 +19,12 @@ import {
   FileText,
   GitBranch,
   Hash,
+  KeyRound,
+  Link2,
   LoaderCircle,
+  LockKeyhole,
   Play,
+  ReceiptText,
   RotateCcw,
   Server,
   ShieldAlert,
@@ -30,13 +35,13 @@ import {
 } from "lucide-react";
 import type { TaskAggregate } from "@donelayer/database";
 import type { TaskStatus } from "@donelayer/shared";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { StatusBadge } from "@/components/ui/status";
 import { cn } from "@/lib/cn";
 import { formatCurrency, formatRelativeTime, humanize, taskStatusTone } from "@/lib/format";
 
-type Tab = "overview" | "logs" | "evidence" | "verification" | "payment" | "review";
+type Tab = "overview" | "contract" | "permissions" | "logs" | "evidence" | "verification" | "receipt" | "payment" | "review";
 
 const lifecycle = [
   { label: "Published", statuses: ["PUBLISHED", "ANALYZING"] },
@@ -56,6 +61,15 @@ function lifecycleIndex(status: TaskStatus): number {
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value));
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "Not active";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
+}
+
+function HashLine({ value }: { value: string }) {
+  return <span className="mono block break-all text-[11px] leading-5 text-[#969da8]">{value}</span>;
 }
 
 function elapsedLabel(start: string | null, end: string | null): string {
@@ -181,7 +195,7 @@ function EvidencePanel({ aggregate, full = false }: { aggregate: TaskAggregate; 
   const icons: Record<string, typeof FileText> = { GIT_DIFF: FileDiff, TEST_RESULT: CheckCircle2, BUILD_RESULT: Code2, SCREENSHOT: FileCheck2, COMMAND_RESULT: TerminalSquare };
   return (
     <Panel>
-      <PanelHeader title="Evidence artifacts" description={`${aggregate.evidence.length} immutable artifact${aggregate.evidence.length === 1 ? "" : "s"}`} action={<Hash className="size-4 text-[#666e7a]" />} />
+      <PanelHeader title={full ? "Evidence and ledger" : "Evidence artifacts"} description={`${aggregate.evidence.length} immutable artifact${aggregate.evidence.length === 1 ? "" : "s"}`} action={<Hash className="size-4 text-[#666e7a]" />} />
       {evidence.length ? (
         <div className="divide-y divide-[#242831]">
           {evidence.map((artifact) => {
@@ -194,12 +208,127 @@ function EvidencePanel({ aggregate, full = false }: { aggregate: TaskAggregate; 
                   <div className="mt-1 flex items-center gap-2 text-[10px] text-[#666e7a]"><span>{humanize(artifact.artifactType)}</span><span>·</span><span>{artifact.size} B</span></div>
                   <div className="mono mt-1 truncate text-[10px] text-[#555d68]">sha256 {artifact.sha256}</div>
                 </div>
-                <button className="focus-ring flex size-8 items-center justify-center rounded-[5px] text-[#666e7a] hover:bg-[#1d2027] hover:text-white" title="Artifact download is disabled in demo mode" aria-label={`Download ${artifact.fileName}`}><Download className="size-3.5" /></button>
+                <button disabled className="flex size-8 items-center justify-center rounded-[5px] text-[#555d68]" title="Artifact download is not available in this view" aria-label={`Download ${artifact.fileName}`}><Download className="size-3.5" /></button>
               </div>
             );
           })}
         </div>
       ) : <div className="flex min-h-36 items-center justify-center px-4 text-center text-xs text-[#666e7a]">Evidence appears after the worker submits a result.</div>}
+      {full ? (
+        <div className="border-t border-[#2a2e36]">
+          <div className="flex items-center justify-between gap-3 border-b border-[#242831] px-4 py-3">
+            <div>
+              <h3 className="text-xs font-semibold text-white">Evidence Ledger</h3>
+              <p className="mt-1 text-[11px] text-[#666e7a]">{aggregate.evidenceLedger.length} append-only entries</p>
+            </div>
+            <StatusBadge label={aggregate.evidenceLedgerVerification.valid ? "Chain valid" : "Chain invalid"} tone={aggregate.evidenceLedgerVerification.valid ? "success" : "danger"} compact />
+          </div>
+          {aggregate.evidenceLedger.length ? (
+            <div className="divide-y divide-[#242831]">
+              {aggregate.evidenceLedger.map((entry) => (
+                <div key={entry.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[48px_minmax(150px,0.55fr)_minmax(0,1fr)] sm:items-center">
+                  <span className="mono text-[11px] text-[#666e7a]">#{entry.sequenceNumber}</span>
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold text-white">{humanize(entry.entryType)}</div>
+                    <div className="mt-1 truncate text-[10px] text-[#666e7a]">{entry.sourceRecordType}</div>
+                  </div>
+                  <div className="min-w-0"><HashLine value={entry.entrySha256} /></div>
+                </div>
+              ))}
+            </div>
+          ) : <div className="px-4 py-8 text-center text-xs text-[#666e7a]">No ledger entries have been recorded.</div>}
+          {aggregate.evidenceLedgerVerification.chainSha256 ? <div className="border-t border-[#242831] px-4 py-3"><div className="mb-1 text-[10px] font-semibold uppercase text-[#666e7a]">Chain SHA-256</div><HashLine value={aggregate.evidenceLedgerVerification.chainSha256} /></div> : null}
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
+function ContractPanel({ aggregate }: { aggregate: TaskAggregate }) {
+  const version = aggregate.taskContract;
+  if (!version) {
+    return <Panel><PanelHeader title="Task Contract" description="No versioned Contract is attached to this Job." /><div className="px-4 py-10 text-center text-xs text-[#666e7a]">A Contract must be locked before a trusted Worker run can begin.</div></Panel>;
+  }
+  const contract = version.contract;
+  return (
+    <Panel>
+      <PanelHeader title="Task Contract" description={`Version ${version.version}`} action={<StatusBadge label={humanize(version.status)} tone={version.status === "LOCKED" ? "success" : version.status === "DRAFT" ? "warning" : "neutral"} compact />} />
+      <div className="grid gap-px bg-[#242831] sm:grid-cols-3">
+        <div className="bg-[#111318] px-4 py-3"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Version</div><div className="mt-1.5 text-xs text-white">{version.version}</div></div>
+        <div className="bg-[#111318] px-4 py-3"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Workflow</div><div className="mt-1.5 text-xs text-white">{contract.allowedWorkflow}</div></div>
+        <div className="bg-[#111318] px-4 py-3"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Locked At</div><div className="mt-1.5 text-xs text-white">{formatDateTime(version.lockedAt)}</div></div>
+      </div>
+      <div className="border-t border-[#242831] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Contract SHA-256</div><div className="mt-2"><HashLine value={version.contractSha256} /></div></div>
+      <div className="border-t border-[#242831] px-4 py-4"><h3 className="text-xs font-semibold text-white">Desired outcome</h3><p className="mt-2 text-sm leading-6 text-[#969da8]">{contract.desiredOutcome}</p></div>
+      <div className="grid gap-px border-t border-[#242831] bg-[#242831] lg:grid-cols-2">
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">Deliverables</h3><ul className="mt-3 space-y-2">{contract.deliverables.map((item) => <li key={item} className="flex gap-2 text-xs leading-5 text-[#b2b8c2]"><FileCheck2 className="mt-0.5 size-3.5 shrink-0 text-[#78b5ff]" />{item}</li>)}</ul></div>
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">Acceptance checks</h3><ul className="mt-3 space-y-2">{contract.acceptanceChecks.map((check) => <li key={check.id} className="flex gap-2 text-xs leading-5 text-[#b2b8c2]"><ClipboardCheck className="mt-0.5 size-3.5 shrink-0 text-[#72d981]" /><span>{check.label}<span className="ml-2 text-[10px] font-semibold text-[#666e7a]">{check.required ? "REQUIRED" : "OPTIONAL"}</span></span></li>)}</ul></div>
+      </div>
+    </Panel>
+  );
+}
+
+function PermissionsPanel({ aggregate }: { aggregate: TaskAggregate }) {
+  const lease = aggregate.permissionLease;
+  if (!lease) {
+    return <Panel><PanelHeader title="Permission Lease" description="No Permission Lease is attached to this Job." /><div className="px-4 py-10 text-center text-xs text-[#666e7a]">Permission scope is created server-side for trusted Worker runs.</div></Panel>;
+  }
+  const violations = aggregate.evidenceLedger.filter((entry) => entry.entryType === "PERMISSION_VIOLATION");
+  const healthy = lease.status === "ACTIVE" || lease.status === "COMPLETED";
+  return (
+    <Panel>
+      <PanelHeader title="Permission Lease" description={`Version ${lease.version}`} action={<StatusBadge label={humanize(lease.status)} tone={lease.status === "VIOLATED" || lease.status === "REVOKED" ? "danger" : healthy ? "success" : "warning"} compact />} />
+      <div className="grid gap-px bg-[#242831] sm:grid-cols-2">
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Effective Time</div><div className="mt-2 text-xs text-white">{formatDateTime(lease.startsAt)}</div></div>
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Expiry</div><div className="mt-2 text-xs text-white">{formatDateTime(lease.expiresAt)}</div></div>
+      </div>
+      <div className="grid gap-px border-t border-[#242831] bg-[#242831] lg:grid-cols-2">
+        <div className="bg-[#111318] px-4 py-4"><h3 className="flex items-center gap-2 text-xs font-semibold text-white"><KeyRound className="size-4 text-[#72d981]" />Allowed Actions</h3><div className="mt-3 flex flex-wrap gap-2">{lease.scope.allowedActions.map((action) => <span key={action} className="rounded-[4px] border border-[#295b34] bg-[#102718] px-2 py-1 text-[11px] text-[#72d981]">{action}</span>)}</div></div>
+        <div className="bg-[#111318] px-4 py-4"><h3 className="flex items-center gap-2 text-xs font-semibold text-white"><LockKeyhole className="size-4 text-[#ff8e88]" />Denied Actions</h3><div className="mt-3 flex flex-wrap gap-2">{lease.scope.deniedActions.map((action) => <span key={action} className="rounded-[4px] border border-[#6e2d2b] bg-[#2b1718] px-2 py-1 text-[11px] text-[#ffb4b0]">{action}</span>)}</div></div>
+      </div>
+      <div className="border-t border-[#242831] px-4 py-4">
+        <div className="flex items-center justify-between gap-3"><h3 className="text-xs font-semibold text-white">Permission Violations</h3><StatusBadge label={violations.length ? `${violations.length} recorded` : "None recorded"} tone={violations.length ? "danger" : "success"} compact /></div>
+        {violations.length ? <ul className="mt-3 space-y-2">{violations.map((entry) => <li key={entry.id} className="text-xs text-[#ffb4b0]">Ledger entry #{entry.sequenceNumber} · {formatDateTime(entry.createdAt)}</li>)}</ul> : <p className="mt-2 text-xs leading-5 text-[#969da8]">No blocked or out-of-scope operation was recorded for this Permission Lease.</p>}
+      </div>
+    </Panel>
+  );
+}
+
+function receiptTone(result: string): "success" | "warning" | "danger" | "neutral" {
+  if (result === "VERIFIED") return "success";
+  if (result === "PARTIALLY_VERIFIED" || result === "UNVERIFIED") return "warning";
+  if (result === "FAILED" || result === "PERMISSION_VIOLATION" || result === "INVALID_EVIDENCE_CHAIN" || result === "DISPUTED") return "danger";
+  return "neutral";
+}
+
+function ReceiptPanel({ aggregate }: { aggregate: TaskAggregate }) {
+  const record = aggregate.receipt;
+  if (!record) {
+    return <Panel><PanelHeader title="Verified Job Receipt" description="No Receipt has been issued." action={<StatusBadge label="Not issued" tone="neutral" compact />} /><div className="px-4 py-10 text-center text-xs leading-5 text-[#666e7a]">A Receipt is created only after execution evidence, Permission scope, required checks, and the Evidence Ledger chain are evaluated.</div></Panel>;
+  }
+  const receipt = record.receipt;
+  return (
+    <Panel>
+      <PanelHeader title="Verified Job Receipt" description="Hash-verifiable DoneLayer execution receipt." action={<StatusBadge label={humanize(record.result)} tone={receiptTone(record.result)} compact />} />
+      {record.invalidatedAt ? <div className="border-b border-[#6e2d2b] bg-[#2b1718] px-4 py-3 text-xs font-semibold text-[#ff8e88]">This Receipt was invalidated at {formatDateTime(record.invalidatedAt)}.</div> : null}
+      <div className="grid gap-px bg-[#242831] lg:grid-cols-2">
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Public Receipt ID</div><div className="mt-2"><HashLine value={record.receiptPublicId} /></div></div>
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Issued At</div><div className="mt-2 text-xs text-white">{formatDateTime(record.createdAt)}</div></div>
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Receipt SHA-256</div><div className="mt-2"><HashLine value={record.receiptSha256} /></div></div>
+        <div className="bg-[#111318] px-4 py-4"><div className="text-[10px] font-semibold uppercase text-[#666e7a]">Evidence Chain SHA-256</div><div className="mt-2"><HashLine value={record.evidenceChainSha256} /></div></div>
+      </div>
+      <div className="grid gap-px border-t border-[#242831] bg-[#242831] lg:grid-cols-2">
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">Who requested</h3><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-[#666e7a]">Customer reference</dt><dd className="mt-1 text-[#b2b8c2]">{receipt.whoRequested.customerReference}</dd></div><div><dt className="text-[#666e7a]">Task ID</dt><dd className="mt-1"><HashLine value={receipt.whoRequested.taskId} /></dd></div><div className="flex justify-between gap-3"><dt className="text-[#666e7a]">Ordered</dt><dd className="text-right text-[#b2b8c2]">{formatDateTime(receipt.whoRequested.orderedAt)}</dd></div></dl></div>
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">Who executed</h3><dl className="mt-3 space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-[#666e7a]">Agent</dt><dd className="text-right text-[#b2b8c2]">{receipt.whoExecuted.agentPublicIdentity} · v{receipt.whoExecuted.agentVersion}</dd></div><div><dt className="text-[#666e7a]">Agent / Provider IDs</dt><dd className="mt-1"><HashLine value={`${receipt.whoExecuted.agentId} / ${receipt.whoExecuted.providerId}`} /></dd></div><div className="flex justify-between gap-3"><dt className="text-[#666e7a]">Execution node</dt><dd className="text-right text-[#b2b8c2]">{receipt.whoExecuted.workerPublicIdentity} · v{receipt.whoExecuted.workerVersion ?? "n/a"}</dd></div><div><dt className="text-[#666e7a]">Worker ID</dt><dd className="mt-1">{receipt.whoExecuted.workerId ? <HashLine value={receipt.whoExecuted.workerId} /> : <span className="text-[#969da8]">Not applicable to managed execution</span>}</dd></div><div className="flex justify-between gap-3"><dt className="text-[#666e7a]">Runtime / OS / Arch</dt><dd className="text-right text-[#b2b8c2]">{receipt.whoExecuted.runtime} / {receipt.whoExecuted.os} / {receipt.whoExecuted.capabilitySnapshot?.architecture ?? "provider-observed"}</dd></div></dl></div>
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">What was agreed</h3><p className="mt-3 text-xs leading-5 text-[#b2b8c2]">{receipt.whatWasAgreed.desiredOutcome}</p><p className="mt-2 text-xs text-[#969da8]">Deliverables: {receipt.whatWasAgreed.deliverables.join(", ")}</p><p className="mt-2 text-[11px] text-[#666e7a]">Contract v{receipt.whatWasAgreed.contractVersion} · {receipt.whatWasAgreed.acceptanceChecks.length} checks</p></div>
+        <div className="bg-[#111318] px-4 py-4"><h3 className="text-xs font-semibold text-white">What was permitted</h3><p className="mt-3 text-xs leading-5 text-[#b2b8c2]">Allowed: {receipt.whatWasPermitted.allowedActions.join(", ")}</p><p className="mt-2 text-xs leading-5 text-[#969da8]">Denied: {receipt.whatWasPermitted.deniedActions.join(", ")}</p><p className="mt-2 text-[11px] text-[#666e7a]">{formatDateTime(receipt.whatWasPermitted.effectiveAt)} to {formatDateTime(receipt.whatWasPermitted.expiresAt)} · {receipt.whatWasPermitted.permissionViolations.length} violations</p></div>
+        <div className="bg-[#111318] px-4 py-4 lg:col-span-2"><h3 className="text-xs font-semibold text-white">What happened</h3><div className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><div className="text-[#666e7a]">Job Run ID</div><div className="mt-1"><HashLine value={receipt.whatHappened.jobRunId} /></div></div><div className="text-[#b2b8c2]">{formatDateTime(receipt.whatHappened.startedAt)} to {formatDateTime(receipt.whatHappened.finishedAt)}<p className="mt-1 text-[11px] text-[#666e7a]">{receipt.whatHappened.durationMs} ms · Workspace {receipt.whatHappened.workspaceCleaned ? "cleaned" : "not confirmed clean"}</p></div></div>{receipt.whatHappened.artifacts.map((artifact) => <div key={artifact.id} className="mt-3 border-t border-[#242831] pt-3 text-xs"><div className="text-[#b2b8c2]">{artifact.fileName} · {artifact.mimeType} · {artifact.size} bytes</div><div className="mt-1"><HashLine value={artifact.sha256} /></div></div>)}</div>
+      </div>
+      <div className="border-t border-[#242831] px-4 py-4"><h3 className="text-xs font-semibold text-white">How it was verified</h3><div className="mt-3 grid gap-2 sm:grid-cols-2">{receipt.howVerified.checks.map((check) => <div key={check.id} className="flex items-start gap-2 text-xs leading-5"><CheckCircle2 className={cn("mt-0.5 size-3.5 shrink-0", check.status === "PASSED" ? "text-[#72d981]" : "text-[#ff8e88]")} /><span className="text-[#b2b8c2]">{check.summary}</span></div>)}</div></div>
+      <div className="flex flex-wrap gap-2 border-t border-[#2a2e36] p-3">
+        <ButtonLink href={`/receipts/${encodeURIComponent(record.receiptPublicId)}`} size="sm"><ShieldCheck className="size-4" /> Verify receipt</ButtonLink>
+        <ButtonLink href={`/receipts/${encodeURIComponent(record.receiptPublicId)}`} variant="secondary" size="sm"><Link2 className="size-4" /> Public view</ButtonLink>
+      </div>
     </Panel>
   );
 }
@@ -254,7 +383,9 @@ function SummaryPanel({ aggregate }: { aggregate: TaskAggregate }) {
 
 export function TaskDetailClient({ initial, autoRun, canOperate = true }: { initial: TaskAggregate; autoRun: boolean; canOperate?: boolean }) {
   const [aggregate, setAggregate] = useState(initial);
-  const [running, setRunning] = useState(canOperate && autoRun && !terminalStatuses.includes(initial.task.status));
+  const isDemo = initial.task.repository.startsWith("demo://") && (!initial.jobRun || initial.jobRun.executor === "DEMO");
+  const isWorkerSmoke = initial.jobRun?.workflowTemplate === "WORKER_SMOKE_V1";
+  const [running, setRunning] = useState(canOperate && isDemo && autoRun && !terminalStatuses.includes(initial.task.status));
   const [stepping, setStepping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
@@ -262,7 +393,7 @@ export function TaskDetailClient({ initial, autoRun, canOperate = true }: { init
   const [openingDispute, setOpeningDispute] = useState(false);
 
   const step = useCallback(async () => {
-    if (stepping) return;
+    if (stepping || !isDemo) return;
     setStepping(true);
     try {
       const response = await fetch(`/api/demo/${aggregate.task.id}/step`, { method: "POST" });
@@ -277,26 +408,32 @@ export function TaskDetailClient({ initial, autoRun, canOperate = true }: { init
     } finally {
       setStepping(false);
     }
-  }, [aggregate.task.id, stepping]);
+  }, [aggregate.task.id, isDemo, stepping]);
 
   useEffect(() => {
-    if (!running || stepping || terminalStatuses.includes(aggregate.task.status)) return;
+    if (!isDemo || !running || stepping || terminalStatuses.includes(aggregate.task.status)) return;
     const timer = window.setTimeout(() => void step(), aggregate.task.status === "RUNNING" ? 900 : 650);
     return () => window.clearTimeout(timer);
-  }, [aggregate.task.status, running, step, stepping]);
+  }, [aggregate.task.status, isDemo, running, step, stepping]);
 
   const activeMatch = aggregate.matches[0];
   const matchReason = activeMatch?.reasons[0];
   const elapsed = elapsedLabel(aggregate.jobRun?.startedAt ?? null, aggregate.jobRun?.endedAt ?? null);
   const released = aggregate.ledgerEntries.some((entry) => entry.entryType === "RELEASE" && entry.amountCents > 0);
-  const tabs = useMemo(() => [
-    ["overview", "Summary"],
-    ["logs", "Live logs"],
-    ["evidence", `Evidence ${aggregate.evidence.length ? `(${aggregate.evidence.length})` : ""}`],
-    ["verification", "Verification"],
-    ["payment", "Payment"],
-    ["review", "Review"]
-  ] as Array<[Tab, string]>, [aggregate.evidence.length]);
+  const tabs = useMemo(() => {
+    const trustTabs: Array<[Tab, string]> = [
+      ["overview", "Summary"],
+      ["contract", "Contract"],
+      ["permissions", "Permissions"],
+      ["evidence", `Evidence ${aggregate.evidence.length ? `(${aggregate.evidence.length})` : ""}`],
+      ["receipt", "Receipt"]
+    ];
+    if (!isDemo) return trustTabs;
+    const demoTabs: Array<[Tab, string]> = [["logs", "Live logs"], ["verification", "Verification"], ["payment", "Payment"], ["review", "Review"]];
+    return [...trustTabs, ...demoTabs];
+  }, [aggregate.evidence.length, isDemo]);
+
+  const taskTypeLabel = isWorkerSmoke ? "Worker Infrastructure Verification" : humanize(aggregate.task.taskType);
 
   async function openDispute() {
     setOpeningDispute(true);
@@ -319,22 +456,22 @@ export function TaskDetailClient({ initial, autoRun, canOperate = true }: { init
       <section className="mb-5">
         <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-[#666e7a]"><span>{aggregate.task.id.slice(0, 18)}</span><ChevronRight className="size-3" /><span>{humanize(aggregate.task.taskType)}</span><StatusBadge label={humanize(aggregate.task.status)} tone={taskStatusTone(aggregate.task.status)} compact /></div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#666e7a]"><span>{aggregate.task.id.slice(0, 18)}</span><ChevronRight className="size-3" /><span>{taskTypeLabel}</span><StatusBadge label={humanize(aggregate.task.status)} tone={taskStatusTone(aggregate.task.status)} compact /></div>
             <h2 className="mt-3 max-w-4xl text-2xl font-semibold leading-8 text-white">{aggregate.task.title}</h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#969da8]">
-              <span className="flex items-center gap-1.5"><GitBranch className="size-3.5" /> {aggregate.task.repository.replace("demo://", "")} · {aggregate.task.targetBranch}</span>
+              {isWorkerSmoke ? <span className="flex items-center gap-1.5"><Server className="size-3.5" /> Fixed server-side workflow · WORKER_SMOKE_V1</span> : <span className="flex items-center gap-1.5"><GitBranch className="size-3.5" /> {aggregate.task.repository.replace("demo://", "")} · {aggregate.task.targetBranch}</span>}
               <span className="flex items-center gap-1.5"><Clock3 className="size-3.5" /> Updated {formatRelativeTime(aggregate.task.updatedAt)}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {error ? <span className="max-w-xs text-xs text-[#ff8e88]">{error}</span> : null}
-            {canOperate && !terminalStatuses.includes(aggregate.task.status) ? (
+            {canOperate && isDemo && !terminalStatuses.includes(aggregate.task.status) ? (
               <Button variant="secondary" size="sm" onClick={() => setRunning((value) => !value)}>
                 {running ? <><Circle className="size-3 fill-current" /> Pause demo</> : <><Play className="size-4" /> Continue demo</>}
               </Button>
             ) : null}
-            {canOperate && !running && !terminalStatuses.includes(aggregate.task.status) ? <Button size="sm" onClick={() => void step()} disabled={stepping}>{stepping ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Advance one step</Button> : null}
-            {canOperate ? <Button variant="danger" size="sm" onClick={() => setTab("review")}><ShieldAlert className="size-4" /> Open dispute</Button> : null}
+            {canOperate && isDemo && !running && !terminalStatuses.includes(aggregate.task.status) ? <Button size="sm" onClick={() => void step()} disabled={stepping}>{stepping ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Advance one step</Button> : null}
+            {canOperate && isDemo ? <Button variant="danger" size="sm" onClick={() => setTab("review")}><ShieldAlert className="size-4" /> Open dispute</Button> : null}
           </div>
         </div>
 
@@ -354,13 +491,17 @@ export function TaskDetailClient({ initial, autoRun, canOperate = true }: { init
             <div className="min-w-0 bg-[#111318] px-4 py-4">
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-[#666e7a]"><Activity className="size-3.5" /> Execution time</div>
               <div className="mono mt-2 text-sm font-semibold text-white">{elapsed}</div>
-              <div className="mt-1 text-xs text-[#969da8]">Max 30 minutes</div>
+              <div className="mt-1 text-xs text-[#969da8]">{isDemo ? "Max 30 minutes" : aggregate.permissionLease ? `Max ${aggregate.permissionLease.scope.maxRuntimeSeconds} seconds` : "No runtime permission"}</div>
             </div>
-            <div className="min-w-0 bg-[#111318] px-4 py-4">
+            {isDemo ? <div className="min-w-0 bg-[#111318] px-4 py-4">
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-[#666e7a]"><CircleDollarSign className="size-3.5" /> Test payment</div>
               <div className="mt-2 text-sm font-semibold text-white">{formatCurrency(aggregate.task.budgetCents)}</div>
               <div className={cn("mt-1 text-xs", released ? "text-[#72d981]" : "text-[#e3b341]")}>{released ? "Released" : "Reserved"}</div>
-            </div>
+            </div> : <div className="min-w-0 bg-[#111318] px-4 py-4">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-[#666e7a]"><ReceiptText className="size-3.5" /> Receipt</div>
+              <div className="mt-2 truncate text-sm font-semibold text-white">{aggregate.receipt ? humanize(aggregate.receipt.result) : "Not issued"}</div>
+              <div className={cn("mt-1 text-xs", aggregate.receipt?.result === "VERIFIED" ? "text-[#72d981]" : aggregate.receipt ? "text-[#ff8e88]" : "text-[#969da8]")}>{aggregate.receipt ? "Evidence-backed result" : "Awaiting verification"}</div>
+            </div>}
           </div>
           {matchReason ? <div className="border-t border-[#242831] px-4 py-3 text-xs leading-5 text-[#969da8]"><span className="mr-2 font-semibold text-[#8fc2ff]">Match reason</span>{matchReason}</div> : null}
         </div>
@@ -377,14 +518,17 @@ export function TaskDetailClient({ initial, autoRun, canOperate = true }: { init
       {tab === "overview" ? (
         <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
           <div className="min-w-0 space-y-5"><JobLog aggregate={aggregate} /><TaskTimeline aggregate={aggregate} /></div>
-          <div className="min-w-0 space-y-5"><VerificationPanel aggregate={aggregate} onEvidence={() => setTab("evidence")} /><EvidencePanel aggregate={aggregate} /><PaymentPanel aggregate={aggregate} /></div>
+          <div className="min-w-0 space-y-5"><VerificationPanel aggregate={aggregate} onEvidence={() => setTab("evidence")} /><EvidencePanel aggregate={aggregate} />{isDemo ? <PaymentPanel aggregate={aggregate} /> : null}</div>
         </div>
       ) : null}
+      {tab === "contract" ? <div className="max-w-5xl"><ContractPanel aggregate={aggregate} /></div> : null}
+      {tab === "permissions" ? <div className="max-w-5xl"><PermissionsPanel aggregate={aggregate} /></div> : null}
       {tab === "logs" ? <JobLog aggregate={aggregate} /> : null}
       {tab === "evidence" ? <EvidencePanel aggregate={aggregate} full /> : null}
       {tab === "verification" ? <div className="max-w-3xl"><VerificationPanel aggregate={aggregate} onEvidence={() => setTab("evidence")} /></div> : null}
-      {tab === "payment" ? <div className="max-w-xl"><PaymentPanel aggregate={aggregate} /></div> : null}
-      {tab === "review" ? (
+      {tab === "receipt" ? <div className="max-w-5xl"><ReceiptPanel aggregate={aggregate} /></div> : null}
+      {isDemo && tab === "payment" ? <div className="max-w-xl"><PaymentPanel aggregate={aggregate} /></div> : null}
+      {isDemo && tab === "review" ? (
         <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
           <SummaryPanel aggregate={aggregate} />
           <Panel>

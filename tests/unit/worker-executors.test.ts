@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { WORKER_PROTOCOL_VERSION, type JobEnvelope } from "@donelayer/worker-protocol";
+import {
+  PermissionGuard,
+  WORKER_PROTOCOL_VERSION,
+  type JobEnvelope,
+} from "@donelayer/worker-protocol";
 import {
   CODEX_OUTPUT_SCHEMA,
   CodexCliExecutor,
@@ -16,6 +20,8 @@ import {
   createCodexEnvironment,
 } from "../../apps/worker/src/executors/codex.js";
 import { DemoExecutor } from "../../apps/worker/src/executors/demo.js";
+import { WorkerSmokeExecutor } from "../../apps/worker/src/executors/worker-smoke.js";
+import { DisposableWorkspaceManager } from "../../apps/worker/src/workspace.js";
 
 const temporaryDirectories: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -25,12 +31,84 @@ afterEach(async () => {
 });
 
 describe("Worker executors", () => {
+  it("creates a real hello.txt in an empty disposable smoke workspace", async () => {
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "donelayer-smoke-root-"));
+    temporaryDirectories.push(workspaceRoot);
+    const manager = new DisposableWorkspaceManager(workspaceRoot);
+    const job = smokeJobEnvelope();
+    const workdir = await manager.prepare(job);
+    const events: string[] = [];
+
+    expect(await readdir(workdir)).toEqual([]);
+    const result = await new WorkerSmokeExecutor().execute({
+      job,
+      workdir,
+      permissionGuard: boundPermissionGuard(job, workdir),
+      signal: new AbortController().signal,
+      emit: async (event) => {
+        events.push(event.type);
+      },
+    });
+
+    const artifact = result.artifacts[0];
+    expect(artifact).toMatchObject({
+      artifactType: "OTHER",
+      fileName: "hello.txt",
+      mimeType: "text/plain",
+    });
+    const persistedBytes = await readFile(path.join(workdir, "hello.txt"));
+    expect(Buffer.from(artifact!.bytes)).toEqual(persistedBytes);
+    const content = persistedBytes.toString("utf8");
+    expect(content).toContain(`Job ID: ${job.jobRunId}`);
+    expect(content).toContain(`Worker ID: ${job.workerId}`);
+    expect(content).toMatch(/Started At: \d{4}-\d{2}-\d{2}T/);
+    expect(content).toMatch(/Finished At: \d{4}-\d{2}-\d{2}T/);
+    expect(content).toMatch(/Worker OS: \S+/);
+    expect(events).toEqual(["EXECUTOR_STARTED", "FILE_CHANGED", "EXECUTOR_FINISHED"]);
+
+    await manager.cleanup(workdir);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses to write smoke evidence when the Permission Lease omits the action", async () => {
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "donelayer-smoke-denied-root-"));
+    temporaryDirectories.push(workspaceRoot);
+    const manager = new DisposableWorkspaceManager(workspaceRoot);
+    const base = smokeJobEnvelope();
+    const job: JobEnvelope = {
+      ...base,
+      permissionLease: {
+        ...base.permissionLease,
+        scope: {
+          ...base.permissionLease.scope,
+          allowedActions: base.permissionLease.scope.allowedActions.filter(
+            (action) => action !== "write_hello_txt",
+          ),
+        },
+      },
+    };
+    const workdir = await manager.prepare(job);
+
+    await expect(
+      new WorkerSmokeExecutor().execute({
+        job,
+        workdir,
+        permissionGuard: boundPermissionGuard(job, workdir),
+        signal: new AbortController().signal,
+        emit: async () => undefined,
+      }),
+    ).rejects.toThrow("Action write_hello_txt is not allowed");
+    expect(await readdir(workdir)).toEqual([]);
+  });
+
   it("runs the deterministic DemoExecutor and produces real artifact hashes inputs", async () => {
     const events: string[] = [];
     const executor = new DemoExecutor({ stepDelayMs: 0, sleep: async () => undefined });
+    const job = jobEnvelope();
     const result = await executor.execute({
-      job: jobEnvelope(),
+      job,
       workdir: process.cwd(),
+      permissionGuard: boundPermissionGuard(job, process.cwd()),
       signal: new AbortController().signal,
       emit: async (event) => {
         events.push(event.type);
@@ -57,11 +135,13 @@ describe("Worker executors", () => {
     const controller = new AbortController();
     controller.abort(new Error("cancelled by test"));
     const executor = new DemoExecutor();
+    const job = jobEnvelope();
 
     await expect(
       executor.execute({
-        job: jobEnvelope(),
+        job,
         workdir: process.cwd(),
+        permissionGuard: boundPermissionGuard(job, process.cwd()),
         signal: controller.signal,
         emit: async () => undefined,
       }),
@@ -71,13 +151,15 @@ describe("Worker executors", () => {
   it("technically enforces read-only and Pull Request permissions in DemoExecutor", async () => {
     const events: string[] = [];
     const base = jobEnvelope();
+    const job: JobEnvelope = {
+      ...base,
+      permissions: { modifyCode: false, createPullRequest: false, humanApprovalRequired: true },
+    };
     const executor = new DemoExecutor({ stepDelayMs: 0, sleep: async () => undefined });
     const result = await executor.execute({
-      job: {
-        ...base,
-        permissions: { modifyCode: false, createPullRequest: false, humanApprovalRequired: true },
-      },
+      job,
       workdir: process.cwd(),
+      permissionGuard: boundPermissionGuard(job, process.cwd()),
       signal: new AbortController().signal,
       emit: async (event) => {
         events.push(event.type);
@@ -146,9 +228,11 @@ describe("Worker executors", () => {
       },
     };
     const executor = new CodexCliExecutor({ loadSdk: async () => sdk as never });
+    const job: JobEnvelope = { ...jobEnvelope(), executor: { kind: "codex-cli" } };
     const result = await executor.execute({
-      job: { ...jobEnvelope(), executor: { kind: "codex-cli" } },
+      job,
       workdir,
+      permissionGuard: boundPermissionGuard(job, workdir),
       signal: new AbortController().signal,
       emit: async () => undefined,
     });
@@ -201,6 +285,8 @@ describe("Worker executors", () => {
 });
 
 function jobEnvelope(): JobEnvelope {
+  const permissionStartsAt = new Date(Date.now() - 1_000).toISOString();
+  const permissionExpiresAt = new Date(Date.now() + 60_000).toISOString();
   return {
     protocolVersion: WORKER_PROTOCOL_VERSION,
     taskId: randomUUID(),
@@ -209,7 +295,41 @@ function jobEnvelope(): JobEnvelope {
     jobRunId: randomUUID(),
     workerId: randomUUID(),
     leaseToken: "lease-token-that-is-at-least-thirty-two-characters",
-    leaseExpiresAt: "2026-07-31T12:01:00.000Z",
+    leaseExpiresAt: new Date(Date.now() + 45_000).toISOString(),
+    taskContract: { id: randomUUID(), version: 1, sha256: "a".repeat(64) },
+    permissionLease: {
+      id: randomUUID(),
+      version: 1,
+      status: "ACTIVE",
+      startsAt: permissionStartsAt,
+      expiresAt: permissionExpiresAt,
+      scope: {
+        allowedActions: [
+          "create_job_workspace",
+          "write_hello_txt",
+          "calculate_sha256",
+          "upload_artifact",
+          "report_progress",
+          "cleanup_workspace",
+        ],
+        deniedActions: [
+          "git",
+          "network",
+          "arbitrary_shell",
+          "production_deploy",
+          "delete_outside_workspace",
+          "read_home_directory",
+          "read_other_jobs",
+          "read_credentials",
+        ],
+        allowedPaths: ["$JOB_WORKSPACE"],
+        allowedDomains: [],
+        maxArtifactBytes: 5_000_000,
+        maxRuntimeSeconds: 60,
+        maxApiBudget: 0,
+        humanApprovalActions: [],
+      },
+    },
     executor: { kind: "demo" },
     workflow: { id: "TEST_AND_FIX", version: 1, allowedCommandIds: ["NPM_TEST"] },
     task: {
@@ -234,4 +354,28 @@ function jobEnvelope(): JobEnvelope {
       allowedNetworkDomains: [],
     },
   };
+}
+
+function smokeJobEnvelope(): JobEnvelope {
+  return {
+    ...jobEnvelope(),
+    executor: { kind: "worker-smoke" },
+    workflow: { id: "WORKER_SMOKE_V1", version: 1, allowedCommandIds: [] },
+    repository: { mode: "none" },
+    permissions: { modifyCode: false, createPullRequest: false, humanApprovalRequired: false },
+    limits: {
+      timeoutMs: 60_000,
+      maxLogBytes: 1_000_000,
+      maxArtifactBytes: 5_000_000,
+      maxArtifacts: 1,
+      allowedMimeTypes: ["text/plain"],
+      allowedNetworkDomains: [],
+    },
+  };
+}
+
+function boundPermissionGuard(job: JobEnvelope, workdir: string): PermissionGuard {
+  const guard = new PermissionGuard(job.permissionLease);
+  guard.bindWorkspace(workdir);
+  return guard;
 }

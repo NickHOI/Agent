@@ -121,7 +121,7 @@ export default function DocsPage() {
             <SectionHeading id="authentication" title="Authentication" copy="Demo sessions use a signed HttpOnly cookie. Production deployments can switch to Supabase Auth and database-enforced RLS." />
             <div className="mt-6 flex items-start gap-3 text-sm leading-6 text-[#b2b8c2]">
               <KeyRound className="mt-0.5 size-5 shrink-0 text-[#78b5ff]" aria-hidden="true" />
-              <p>Set <code className="mono text-white">APP_MODE=supabase</code>, configure the publishable Supabase values, and keep the service role key on the server only. Application roles come from trusted app metadata.</p>
+              <p>Set <code className="mono text-white">APP_MODE=supabase</code>, configure the publishable Supabase values, and keep <code className="mono text-white">SUPABASE_SECRET_KEY</code> on the server only. Application roles come from trusted app metadata and durable database relationships.</p>
             </div>
           </section>
 

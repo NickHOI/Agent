@@ -24,7 +24,7 @@ export async function POST(request: Request, context: { params: Promise<{ jobRun
   const { jobRunId } = await context.params;
   try {
     const initialized = getDemoStore().initializeArtifactUpload(jobRunId, worker.id, parsed.data.leaseToken, parsed.data);
-    const uploadUrl = new URL(`/api/worker/uploads/${initialized.artifactId}`, request.url).toString();
+    const uploadUrl = `/api/worker/uploads/${initialized.artifactId}`;
     return noStoreJson({ artifactId: initialized.artifactId, uploadUrl, uploadHeaders: { "x-donelayer-upload-token": initialized.uploadToken } }, { status: 201 });
   } catch (error) {
     return noStoreJson({ error: error instanceof Error ? error.message : "Unable to initialize artifact." }, { status: 409 });

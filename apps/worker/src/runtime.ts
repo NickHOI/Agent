@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import {
+  PermissionGuard,
+  PermissionViolationError,
   WORKER_PROTOCOL_VERSION,
   redactSecrets,
   redactStructuredValue,
+  sha256,
   truncateUtf8,
   type ExecutionResult,
   type JobEnvelope,
@@ -84,8 +87,8 @@ export class WorkerRuntime {
     if (job.workerId !== this.options.config.workerId) {
       throw new Error("Server assigned a job to a different Worker");
     }
-    if (job.executor.kind !== "demo" && !this.options.capabilities.dockerAvailable) {
-      throw new Error("Real execution is disabled because Docker is unavailable; only DemoExecutor may run");
+    if (job.executor.kind === "codex-cli" && !this.options.capabilities.dockerAvailable) {
+      throw new Error("Codex execution is disabled because Docker is unavailable");
     }
     if (!this.options.capabilities.executors.includes(job.executor.kind)) {
       throw new Error(`Worker did not declare the ${job.executor.kind} executor`);
@@ -93,6 +96,7 @@ export class WorkerRuntime {
     const executor = this.executors.get(job.executor.kind);
     if (!executor) throw new Error(`Executor ${job.executor.kind} is not installed`);
 
+    const permissionGuard = new PermissionGuard(job.permissionLease);
     const workspaceManager = new DisposableWorkspaceManager(this.options.workspaceRoot);
     const jobController = new AbortController();
     const executionSignal = AbortSignal.any([parentSignal, jobController.signal]);
@@ -105,6 +109,7 @@ export class WorkerRuntime {
     this.activeJobRunIds.add(job.jobRunId);
 
     const emit: ExecutorProgressSink = async (event) => {
+      permissionGuard.assertActionAllowed("report_progress");
       let message = redactSecrets(event.message);
       const messageBytes = Buffer.byteLength(message, "utf8");
       if (emittedBytes + messageBytes > job.limits.maxLogBytes) {
@@ -129,19 +134,42 @@ export class WorkerRuntime {
     };
 
     try {
+      permissionGuard.assertLeaseActive();
+      permissionGuard.assertBudgetAvailable(0);
+      permissionGuard.assertActionAllowed("create_job_workspace");
+      await this.sendHeartbeat(parentSignal);
+      leaseLoop = this.maintainLease(job, permissionGuard, jobController, executionSignal);
       workdir = await workspaceManager.prepare(job);
-      await emit({ type: "WORKSPACE_PREPARED", message: "Disposable workspace prepared", progress: 2 });
-      leaseLoop = this.maintainLease(job, jobController, executionSignal);
+      permissionGuard.bindWorkspace(workdir);
+      await emit({ type: "WORKSPACE_PREPARED", message: "Disposable workspace prepared", progress: 2, data: { workdir } });
       controlLoop = this.watchControl(job, jobController, executionSignal);
       const result: ExecutionResult = await executor.execute({
         job,
         workdir,
+        permissionGuard,
         signal: executionSignal,
         emit,
       });
-      validateArtifacts(result.artifacts, job);
+      validateArtifacts(result.artifacts, job, permissionGuard);
       const uploaded: UploadedArtifact[] = [];
       for (const artifact of result.artifacts) {
+        permissionGuard.assertActionAllowed(
+          job.workflow.id === "REPOSITORY_MATERIALIZE_V1"
+            ? "calculate_file_sha256"
+            : "calculate_sha256",
+        );
+        const localSha256 = sha256(artifact.bytes);
+        await emit({
+          type: "ARTIFACT_CREATED",
+          message: `Created evidence artifact ${artifact.fileName}`,
+          data: {
+            fileName: artifact.fileName,
+            size: artifact.bytes.byteLength,
+            sha256: localSha256,
+          },
+        });
+        permissionGuard.assertActionAllowed("upload_artifact");
+        permissionGuard.assertBudgetAvailable(0);
         const record = await this.options.client.uploadArtifact(
           job.jobRunId,
           job.leaseToken,
@@ -149,10 +177,17 @@ export class WorkerRuntime {
           executionSignal,
         );
         uploaded.push(record);
+      }
+      if (workdir) {
+        const cleanedWorkdir = workdir;
+        permissionGuard.assertActionAllowed("cleanup_workspace");
+        await workspaceManager.cleanup(cleanedWorkdir);
+        workdir = null;
         await emit({
-          type: "ARTIFACT_CREATED",
-          message: `Uploaded evidence artifact ${artifact.fileName}`,
-          data: { artifactId: record.artifactId, sha256: record.sha256 },
+          type: "CLEANUP_FINISHED",
+          message: "Disposable workspace removed",
+          progress: 100,
+          data: { workdir: cleanedWorkdir },
         });
       }
       const { artifacts: _artifacts, ...wireResult } = result;
@@ -165,6 +200,9 @@ export class WorkerRuntime {
         executionSignal,
       );
     } catch (error) {
+      if (error instanceof PermissionViolationError) {
+        await this.reportPermissionViolation(job, error, sequence++, parentSignal).catch(() => undefined);
+      }
       const message = redactSecrets(error instanceof Error ? error.message : "Worker execution failed");
       await emit({
         type: parentSignal.aborted || executionSignal.aborted ? "CANCELLED" : "EXECUTOR_FAILED",
@@ -177,11 +215,14 @@ export class WorkerRuntime {
       await Promise.allSettled([leaseLoop, controlLoop].filter((loop): loop is Promise<void> => Boolean(loop)));
       try {
         if (workdir) {
-          await workspaceManager.cleanup(workdir);
-          await emit({ type: "CLEANUP_FINISHED", message: "Disposable workspace removed" }).catch(() => undefined);
+          const cleanedWorkdir = workdir;
+          // Revocation cleanup is Worker-owned containment and must not leave a stale workspace behind.
+          await workspaceManager.cleanup(cleanedWorkdir);
+          await emit({ type: "CLEANUP_FINISHED", message: "Disposable workspace removed", data: { workdir: cleanedWorkdir } }).catch(() => undefined);
         }
       } finally {
         this.activeJobRunIds.delete(job.jobRunId);
+        await this.sendHeartbeat(parentSignal.aborted ? undefined : parentSignal).catch(() => undefined);
       }
     }
   }
@@ -211,19 +252,36 @@ export class WorkerRuntime {
 
   private async maintainLease(
     job: JobEnvelope,
+    permissionGuard: PermissionGuard,
     controller: AbortController,
     signal: AbortSignal,
   ): Promise<void> {
     let leaseExpiresAt = new Date(job.leaseExpiresAt).getTime();
+    const permissionExpiresAt = new Date(job.permissionLease.expiresAt).getTime();
+    const permissionRuntimeEndsAt =
+      new Date(job.permissionLease.startsAt).getTime() +
+      job.permissionLease.scope.maxRuntimeSeconds * 1_000;
     while (!signal.aborted) {
-      const remainingMs = leaseExpiresAt - Date.now();
+      try {
+        permissionGuard.assertLeaseActive();
+      } catch (error) {
+        controller.abort(error);
+        return;
+      }
+      const now = Date.now();
+      const remainingMs = Math.min(leaseExpiresAt, permissionExpiresAt, permissionRuntimeEndsAt) - now;
       if (remainingMs <= 0) {
-        controller.abort(new Error("Job lease expired before it could be renewed"));
+        controller.abort(
+          permissionGuard.recordViolation(
+            "runtime",
+            "Permission Lease runtime or expiry boundary was reached",
+          ),
+        );
         return;
       }
       const renewalDelay = Math.min(
         this.options.leaseRenewIntervalMs ?? 15_000,
-        Math.max(500, Math.floor(remainingMs / 3)),
+        Math.max(1, Math.floor(remainingMs / 3)),
       );
       await sleep(renewalDelay, signal);
       if (signal.aborted) return;
@@ -234,12 +292,49 @@ export class WorkerRuntime {
         if (!Number.isFinite(renewedExpiry) || renewedExpiry <= Date.now()) {
           throw new Error("Platform returned an invalid lease expiry");
         }
+        if (renewedExpiry > permissionExpiresAt || renewedExpiry > permissionRuntimeEndsAt) {
+          throw permissionGuard.recordViolation(
+            "execution_lease_renewal",
+            "Platform renewed the execution lease beyond its Permission Lease",
+          );
+        }
         leaseExpiresAt = renewedExpiry;
       } catch (error) {
-        controller.abort(new Error("Job lease could not be renewed", { cause: error }));
+        controller.abort(
+          error instanceof PermissionViolationError
+            ? error
+            : new Error("Job lease could not be renewed", { cause: error }),
+        );
         return;
       }
     }
+  }
+
+  private async reportPermissionViolation(
+    job: JobEnvelope,
+    error: PermissionViolationError,
+    sequence: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { violation } = error;
+    const event: JobRunEvent = {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      eventId: randomUUID(),
+      jobRunId: job.jobRunId,
+      sequence,
+      type: "PERMISSION_VIOLATION",
+      message: truncateUtf8(redactSecrets(violation.reason), 16_384),
+      createdAt: violation.recordedAt,
+      data: {
+        action: truncateUtf8(redactSecrets(violation.action), 256),
+        permissionLeaseId: job.permissionLease.id,
+        ...(violation.resource === undefined
+          ? {}
+          : { resource: truncateUtf8(redactSecrets(violation.resource), 2_048) }),
+      },
+    };
+    await this.options.client.sendEvent(event, job.leaseToken, signal);
+    this.options.onMessage?.(`[${event.type}] ${event.message}`);
   }
 
   private async watchControl(
@@ -273,13 +368,24 @@ export function defaultWorkspaceRoot(configDirectory: string): string {
   return path.join(configDirectory, "jobs");
 }
 
-function validateArtifacts(artifacts: ProducedArtifact[], job: JobEnvelope): void {
+function validateArtifacts(
+  artifacts: ProducedArtifact[],
+  job: JobEnvelope,
+  permissionGuard: PermissionGuard,
+): void {
   if (artifacts.length > job.limits.maxArtifacts) {
     throw new Error("Executor produced too many artifacts");
   }
   for (const artifact of artifacts) {
     if (!job.limits.allowedMimeTypes.includes(artifact.mimeType)) {
       throw new Error(`Artifact MIME type ${artifact.mimeType} is not allowed`);
+    }
+    if (artifact.bytes.byteLength > job.permissionLease.scope.maxArtifactBytes) {
+      throw permissionGuard.recordViolation(
+        "upload_artifact",
+        `Artifact ${artifact.fileName} exceeds the Permission Lease size limit`,
+        artifact.fileName,
+      );
     }
     if (artifact.bytes.byteLength > job.limits.maxArtifactBytes) {
       throw new Error(`Artifact ${artifact.fileName} exceeds the size limit`);

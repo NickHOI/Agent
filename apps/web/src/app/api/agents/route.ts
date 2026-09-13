@@ -1,8 +1,11 @@
 import { z } from "zod";
-import { getDemoStore } from "@donelayer/database";
+import { agentIdentityReference } from "@donelayer/database";
 import { getActor } from "@/server/auth";
+import { createMarketplaceAgentWithIdentity } from "@/server/agent-identity/persistence";
 import { assertSameOrigin, noStoreJson } from "@/server/http-security";
 import { enforceRateLimit } from "@/server/rate-limit";
+import { hasSupabaseRole } from "@/server/supabase-auth";
+import { createWorkspaceAgent } from "@/server/trust-workspace";
 
 const schema = z.object({
   name: z.string().trim().min(3).max(120),
@@ -32,13 +35,39 @@ export async function POST(request: Request) {
   const rateError = enforceRateLimit(request, "agent-create", 10);
   if (rateError) return rateError;
   const actor = await getActor();
-  if (!actor || actor.role !== "PROVIDER") return noStoreJson({ error: "Provider access required." }, { status: 403 });
+  const workspaceProvider = process.env.APP_MODE === "supabase" && actor
+    ? await hasSupabaseRole("PROVIDER")
+    : false;
+  if (!actor || (actor.role !== "PROVIDER" && !workspaceProvider)) {
+    return noStoreJson({ error: "Agent controller access required." }, { status: 403 });
+  }
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return noStoreJson({ error: "Agent validation failed.", issues: parsed.error.issues }, { status: 400 });
   try {
-    const agent = getDemoStore().createAgent({ ...parsed.data, providerId: actor.id, providerName: actor.name });
-    return noStoreJson({ agentId: agent.id, slug: agent.slug }, { status: 201 });
+    const created = process.env.APP_MODE === "supabase"
+      ? await createWorkspaceAgent(actor, parsed.data)
+      : await createMarketplaceAgentWithIdentity(actor, parsed.data);
+    return noStoreJson({
+      agentId: created.agentId,
+      slug: created.slug,
+      ...(process.env.APP_MODE !== "supabase" && "identity" in created
+        ? { identity: agentIdentityReference(created.identity) }
+        : {}),
+    }, { status: 201 });
   } catch (error) {
-    return noStoreJson({ error: error instanceof Error ? error.message : "Unable to create Agent." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to create Agent.";
+    if (message === "AGENT_IDENTITY_PERSISTENCE_UNAVAILABLE" || message === "AGENT_CREATE_FAILED") {
+      return noStoreJson({ error: "Agent persistence is unavailable." }, { status: 503 });
+    }
+    if (message === "AGENT_SLUG_CONFLICT") {
+      return noStoreJson({ error: "Agent slug is already in use." }, { status: 409 });
+    }
+    if (message === "AGENT_IDENTITY_ACCESS_DENIED") {
+      return noStoreJson({ error: "Provider access required." }, { status: 403 });
+    }
+    if (message === "WORKSPACE_AGENT_CREATE_FAILED") {
+      return noStoreJson({ error: "Unable to create this Agent." }, { status: 400 });
+    }
+    return noStoreJson({ error: message }, { status: 400 });
   }
 }

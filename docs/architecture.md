@@ -4,6 +4,25 @@ DoneLayer is a completion marketplace for bounded software tasks. A task is not
 complete when an executor says it is done. Completion requires an independent
 Proof-of-Done verification run and explicit customer acceptance.
 
+## Canonical Planning Context
+
+- `PRODUCT_NORTH_STAR.md` defines the product.
+- `PRODUCT_ROADMAP.md` is the canonical long-term roadmap and locked technology
+  priority. Deferred items must not be silently removed.
+- `CURRENT_PHASE.md` defines what work is currently authorized.
+- `../CURRENT_ARCHITECTURE.md` and `../PRODUCT_REALITY_AUDIT.md` separate
+  connected runtime reality from target architecture.
+
+The first product wedge is Verified Work built around a Work Contract, Evidence
+Bundle, independent verification, and Verified Work Receipt. The long-term
+platform then expands through task-scoped Authority, Agent Identity,
+evidence-based Reputation, controlled Payments, a Verified Settlement Loop, and
+organizational trust. Portable attestations, ERC-8004, HOL/UAID, x402, and other
+standards remain optional adapters. These future layers must extend the internal
+Evidence Ledger and Verified Receipt model. They are not evidence of current
+implementation, and the product must remain fully functional off-chain without
+a token or blockchain dependency.
+
 ## System shape
 
 The MVP is one npm-workspaces monorepo with no required microservices:

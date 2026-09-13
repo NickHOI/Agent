@@ -1,13 +1,14 @@
 import { spawn } from "node:child_process";
-import { statfs } from "node:fs/promises";
-import { arch, cpus, platform, totalmem } from "node:os";
+import { access, readFile, statfs } from "node:fs/promises";
+import { arch, cpus, freemem, platform, totalmem } from "node:os";
 import path from "node:path";
 
 import type {
-  McpServerCapability,
   OperatingSystem,
   WorkerCapabilities,
 } from "@donelayer/worker-protocol";
+
+export const WORKER_MAX_CONCURRENT_JOBS = 1;
 
 export type DoctorCheck = {
   name: string;
@@ -18,33 +19,39 @@ export type DoctorCheck = {
 export type DoctorReport = {
   checks: DoctorCheck[];
   capabilities: WorkerCapabilities;
+  healthyForSmoke: boolean;
   healthyForDemo: boolean;
   healthyForCodex: boolean;
 };
 
 export async function runDoctor(options: { apiUrl?: string; workspacePath?: string } = {}): Promise<DoctorReport> {
-  const [git, docker, codex, githubCli, disk, network] = await Promise.all([
+  const [git, docker, codex, githubCli, npm, disk, network, workerVersion] = await Promise.all([
     probeCommand("git", ["--version"]),
-    probeCommand("docker", ["info", "--format", "{{.ServerVersion}}"]),
+    probeCommand("docker", ["--version"]),
     probeCommand("codex", ["--version"]),
     probeCommand("gh", ["--version"]),
+    probeNpm(),
     probeDisk(options.workspacePath ?? process.cwd()),
     options.apiUrl ? probeNetwork(options.apiUrl) : Promise.resolve({ ok: false, detail: "API URL not configured" }),
+    readWorkerVersion(),
   ]);
-  const mcpServers = readDeclaredMcpCapabilities();
   const supportedLanguages = await detectLanguages();
   const dockerAvailable = docker.ok;
   const codexAvailable = codex.ok;
   const gitAvailable = git.ok;
-  const codexExecutorEnabled = process.env.DONELAYER_ENABLE_CODEX_EXECUTOR === "true";
-  const healthyForCodex =
-    dockerAvailable && codexAvailable && gitAvailable && codexExecutorEnabled;
+  const totalMemoryBytes = totalmem();
+  const availableMemoryBytes = Math.min(totalMemoryBytes, freemem());
 
   const capabilities: WorkerCapabilities = {
     os: currentOperatingSystem(),
     architecture: arch(),
     cpuCount: Math.max(1, cpus().length),
-    memoryBytes: totalmem(),
+    nodeVersion: process.version,
+    npmVersion: npm.ok ? npm.detail : null,
+    workerVersion,
+    processId: process.pid,
+    memoryBytes: totalMemoryBytes,
+    availableMemoryBytes,
     freeDiskBytes: disk.freeBytes,
     dockerAvailable,
     codexAvailable,
@@ -52,37 +59,78 @@ export async function runDoctor(options: { apiUrl?: string; workspacePath?: stri
     githubCliAvailable: githubCli.ok,
     supportedLanguages,
     installedTools: [
+      "node",
+      npm.ok ? "npm" : null,
       git.ok ? "git" : null,
       docker.ok ? "docker" : null,
       codex.ok ? "codex" : null,
       githubCli.ok ? "gh" : null,
     ].filter((value): value is string => Boolean(value)),
-    mcpServers,
-    executors: healthyForCodex ? ["demo", "codex-cli"] : ["demo"],
-    maxConcurrentJobs: 1,
+    mcpServers: [],
+    executors: gitAvailable
+      ? ["worker-smoke", "repository-materializer"]
+      : ["worker-smoke"],
+    maxConcurrentJobs: WORKER_MAX_CONCURRENT_JOBS,
   };
 
   const checks: DoctorCheck[] = [
     { name: "Node.js", status: "PASS", detail: process.version },
+    { name: "npm", status: npm.ok ? "PASS" : "WARN", detail: npm.detail },
+    { name: "Worker process", status: "PASS", detail: `v${workerVersion}, PID ${process.pid}` },
     { name: "Operating system", status: "PASS", detail: `${capabilities.os} ${capabilities.architecture}` },
     { name: "Git", status: git.ok ? "PASS" : "WARN", detail: git.detail },
-    { name: "Docker", status: docker.ok ? "PASS" : "WARN", detail: docker.ok ? docker.detail : `${docker.detail}; real jobs disabled` },
-    { name: "Codex CLI", status: codex.ok ? "PASS" : "WARN", detail: codex.ok ? codex.detail : `${codex.detail}; Codex executor disabled` },
+    { name: "Docker", status: docker.ok ? "PASS" : "WARN", detail: docker.detail },
+    { name: "Codex CLI", status: codex.ok ? "PASS" : "WARN", detail: codex.detail },
     {
       name: "Codex execution",
-      status: healthyForCodex ? "WARN" : "WARN",
-      detail: healthyForCodex
-        ? "Preview enabled; uses Codex workspace-write sandbox and requires provider approval"
-        : "Disabled by default; set DONELAYER_ENABLE_CODEX_EXECUTOR=true only in a dedicated environment",
+      status: "WARN",
+      detail: "Paused by the Worker Reality Gate",
     },
     { name: "GitHub CLI", status: githubCli.ok ? "PASS" : "WARN", detail: githubCli.detail },
     { name: "Free disk", status: disk.freeBytes >= 1024 ** 3 ? "PASS" : "WARN", detail: disk.detail },
     { name: "Platform API", status: network.ok ? "PASS" : options.apiUrl ? "WARN" : "WARN", detail: network.detail },
-    { name: "MCP servers", status: "PASS", detail: `${mcpServers.length} declared without uploading secrets` },
-    { name: "Demo executor", status: "PASS", detail: "Available without Docker, Codex, GitHub, or MCP" },
+    { name: "Worker smoke", status: "PASS", detail: "Available without repository, shell, Codex, or MCP access" },
+    {
+      name: "Repository materializer",
+      status: gitAvailable ? "PASS" : "WARN",
+      detail: gitAvailable
+        ? "Available for the single server allowlisted GitHub repository"
+        : "Unavailable because Git was not detected",
+    },
   ];
 
-  return { checks, capabilities, healthyForDemo: true, healthyForCodex };
+  return {
+    checks,
+    capabilities,
+    healthyForSmoke: true,
+    healthyForDemo: false,
+    healthyForCodex: false,
+  };
+}
+
+async function probeNpm(): Promise<{ ok: boolean; detail: string }> {
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+    path.resolve(path.dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+  ].filter((value): value is string => Boolean(value));
+  for (const candidate of new Set(candidates)) {
+    try {
+      await access(candidate);
+      return probeCommand(process.execPath, [candidate, "--version"]);
+    } catch {
+      // Try the next known npm CLI location.
+    }
+  }
+  return probeCommand(platform() === "win32" ? "npm.cmd" : "npm", ["--version"]);
+}
+
+async function readWorkerVersion(): Promise<string> {
+  const parsed: unknown = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  if (!parsed || typeof parsed !== "object" || !("version" in parsed) || typeof parsed.version !== "string" || !parsed.version.trim()) {
+    throw new Error("Worker package version is unavailable");
+  }
+  return parsed.version;
 }
 
 async function probeCommand(command: string, args: string[]): Promise<{ ok: boolean; detail: string }> {
@@ -167,22 +215,6 @@ async function detectLanguages(): Promise<string[]> {
   ];
   const results = await Promise.all(commands.map(async ([language, command, args]) => ({ language, probe: await probeCommand(command, args) })));
   return results.filter(({ probe }) => probe.ok).map(({ language }) => language);
-}
-
-function readDeclaredMcpCapabilities(): McpServerCapability[] {
-  return (process.env.DONELAYER_MCP_SERVERS ?? "")
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean)
-    .map((name) => ({
-      name,
-      transport: "unknown",
-      tools: [],
-      resources: [],
-      prompts: [],
-      authenticationRequired: false,
-      installed: true,
-    }));
 }
 
 function currentOperatingSystem(): OperatingSystem {

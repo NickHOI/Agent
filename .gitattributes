@@ -1,0 +1,11 @@
+# Keep canonical source and evidence bytes stable across platforms.
+* text=auto eol=lf
+
+*.db binary
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.sqlite binary
+*.woff2 binary

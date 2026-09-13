@@ -3,6 +3,7 @@ import type {
   ExecutorKind,
   JobEnvelope,
   JobRunEventType,
+  PermissionGuard,
 } from "@donelayer/worker-protocol";
 
 export type ExecutorProgressSink = (event: {
@@ -15,6 +16,7 @@ export type ExecutorProgressSink = (event: {
 export type ExecutionContext = {
   job: JobEnvelope;
   workdir: string;
+  permissionGuard: PermissionGuard;
   signal: AbortSignal;
   emit: ExecutorProgressSink;
 };

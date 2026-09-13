@@ -10,10 +10,12 @@ export class DisposableWorkspaceManager {
   async prepare(job: JobEnvelope): Promise<string> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const workdir = await mkdtemp(path.join(this.root, "job-"));
-    if (job.repository.mode !== "demo") {
+    if (job.repository.mode === "none") return workdir;
+    if (job.repository.mode === "allowlisted-github") return workdir;
+    if (job.repository.mode === "github-app") {
       await this.cleanup(workdir);
       throw new Error(
-        "GitHub repository materialization is disabled in this Worker build; use Demo mode until the platform supplies a verified workspace bundle",
+        "GitHub repository materialization is paused by the Worker Reality Gate",
       );
     }
     try {

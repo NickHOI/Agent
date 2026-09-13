@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { getDemoStore } from "@donelayer/database";
+import {
+  REPOSITORY_MATERIALIZATION_BRANCH,
+  REPOSITORY_MATERIALIZATION_REMOTE_URL,
+} from "@donelayer/worker-protocol";
 import { noStoreJson } from "@/server/http-security";
 import { authenticateWorkerRequest } from "@/server/worker-auth";
 
@@ -28,7 +32,22 @@ const schema = z.object({
     commandsRun: z.array(commandSchema).max(100),
     tests: z.object({ total: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), skipped: z.number().int().nonnegative() }).optional(),
     buildSucceeded: z.boolean().optional(),
-    pullRequestUrl: z.string().url().optional()
+    pullRequestUrl: z.string().url().optional(),
+    repositoryMaterialization: z.object({
+      remoteUrl: z.literal(REPOSITORY_MATERIALIZATION_REMOTE_URL),
+      branch: z.literal(REPOSITORY_MATERIALIZATION_BRANCH),
+      commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+      cloneStartedAt: z.string().datetime({ offset: true }),
+      cloneFinishedAt: z.string().datetime({ offset: true }),
+      cloneExitCode: z.number().int(),
+      cloneDurationMs: z.number().int().nonnegative(),
+      cloneArguments: z.array(z.string().min(1).max(2_048)).min(1).max(50),
+      cloneStdout: z.string().max(512 * 1024),
+      cloneStderr: z.string().max(512 * 1024),
+      fileCount: z.number().int().positive().max(100_000),
+      manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      noRepositoryCodeExecuted: z.literal(true)
+    }).strict().optional()
   }).strict(),
   artifacts: z.array(z.object({ artifactId: z.string().uuid(), artifactType: z.string(), fileName: z.string(), mimeType: z.string(), size: z.number().int().nonnegative(), sha256: z.string().regex(/^[a-f0-9]{64}$/) })).max(100)
 }).strict();
@@ -65,8 +84,9 @@ export async function POST(request: Request, context: { params: Promise<{ jobRun
       ...(result.commitShaAfter === undefined ? {} : { commitShaAfter: result.commitShaAfter }),
       ...(result.tests === undefined ? {} : { tests: result.tests }),
       ...(result.buildSucceeded === undefined ? {} : { buildSucceeded: result.buildSucceeded }),
-      ...(result.pullRequestUrl === undefined ? {} : { pullRequestUrl: result.pullRequestUrl })
-    });
+      ...(result.pullRequestUrl === undefined ? {} : { pullRequestUrl: result.pullRequestUrl }),
+      ...(result.repositoryMaterialization === undefined ? {} : { repositoryMaterialization: result.repositoryMaterialization })
+    }, parsed.data.artifacts);
     return noStoreJson({ taskId: updated.task.id, status: updated.task.status });
   } catch (error) {
     return noStoreJson({ error: error instanceof Error ? error.message : "Job submission failed." }, { status: 409 });

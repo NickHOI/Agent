@@ -1,0 +1,13 @@
+{
+  "name": "donelayer-reputation-build-config-fixture",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/verify-build-config.mjs && node --experimental-strip-types --check src/runtime-config.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}

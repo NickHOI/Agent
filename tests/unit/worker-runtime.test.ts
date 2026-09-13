@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -25,6 +25,7 @@ describe("Worker runtime lease lifecycle", () => {
     let renewals = 0;
     let submitted = false;
     let claimed = false;
+    const timeline: string[] = [];
     const fakeClient = {
       heartbeat: async () => undefined,
       claim: async () => {
@@ -40,12 +41,15 @@ describe("Worker runtime lease lifecycle", () => {
         cancelRequested: false,
         leaseExpiresAt: new Date(Date.now() + 45_000).toISOString(),
       }),
-      sendEvent: async () => undefined,
+      sendEvent: async (event: { type: string }) => {
+        timeline.push(event.type);
+      },
       uploadArtifact: async (
         _jobRunId: string,
         _leaseToken: string,
         artifact: ProducedArtifact,
       ) => {
+        timeline.push("UPLOAD");
         await new Promise((resolve) => setTimeout(resolve, 15));
         return {
           artifactId: randomUUID(),
@@ -57,11 +61,12 @@ describe("Worker runtime lease lifecycle", () => {
         };
       },
       submit: async () => {
+        timeline.push("SUBMIT");
         submitted = true;
       },
     } as unknown as WorkerApiClient;
     const executor: JobExecutor = {
-      kind: "demo",
+      kind: "worker-smoke",
       execute: async (): Promise<ExecutionResult> => ({
         status: "succeeded",
         summary: "done",
@@ -102,6 +107,9 @@ describe("Worker runtime lease lifecycle", () => {
       await runtime.start({ signal: new AbortController().signal, once: true });
       expect(submitted).toBe(true);
       expect(renewals).toBeGreaterThan(0);
+      expect(await readdir(workspaceRoot)).toEqual([]);
+      expect(timeline.indexOf("ARTIFACT_CREATED")).toBeLessThan(timeline.indexOf("UPLOAD"));
+      expect(timeline.indexOf("CLEANUP_FINISHED")).toBeLessThan(timeline.indexOf("SUBMIT"));
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -144,7 +152,7 @@ describe("Worker runtime lease lifecycle", () => {
       },
     } as unknown as WorkerApiClient;
     const executor: JobExecutor = {
-      kind: "demo",
+      kind: "worker-smoke",
       execute: async (context): Promise<ExecutionResult> => {
         if (context.job.jobRunId === firstJob.jobRunId) {
           await new Promise<void>((_resolve, reject) => {
@@ -187,6 +195,75 @@ describe("Worker runtime lease lifecycle", () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it("reports a denied Permission Lease action and cleans the one-time workspace", async () => {
+    const workerId = randomUUID();
+    const job = jobEnvelope(workerId);
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "donelayer-runtime-permission-test-"));
+    const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+    let claimed = false;
+    let submitted = false;
+    const fakeClient = {
+      heartbeat: async () => undefined,
+      claim: async () => {
+        if (claimed) return null;
+        claimed = true;
+        return job;
+      },
+      renewLease: async () => new Date(Date.now() + 30_000).toISOString(),
+      getControl: async () => ({
+        cancelRequested: false,
+        leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+      }),
+      sendEvent: async (event: { type: string; data?: Record<string, unknown> }) => {
+        events.push(event);
+      },
+      uploadArtifact: async () => {
+        throw new Error("Denied execution must not upload an artifact");
+      },
+      submit: async () => {
+        submitted = true;
+      },
+    } as unknown as WorkerApiClient;
+    const executor: JobExecutor = {
+      kind: "worker-smoke",
+      execute: async (context): Promise<ExecutionResult> => {
+        context.permissionGuard.assertActionAllowed("network");
+        return successfulResult();
+      },
+    };
+    const runtime = new WorkerRuntime({
+      client: fakeClient,
+      config: {
+        apiUrl: "http://localhost:3000",
+        workerId,
+        name: "Permission Test Worker",
+        pairedAt: new Date().toISOString(),
+        pollIntervalMs: 1,
+      },
+      capabilities: capabilities(),
+      workspaceRoot,
+      executors: [executor],
+      heartbeatIntervalMs: 60_000,
+      leaseRenewIntervalMs: 60_000,
+      controlPollIntervalMs: 60_000,
+    });
+
+    try {
+      await expect(
+        runtime.start({ signal: new AbortController().signal, once: true }),
+      ).rejects.toThrow("Action network is explicitly denied");
+      expect(submitted).toBe(false);
+      expect(await readdir(workspaceRoot)).toEqual([]);
+      const violation = events.find((event) => event.type === "PERMISSION_VIOLATION");
+      expect(violation?.data).toMatchObject({
+        action: "network",
+        permissionLeaseId: job.permissionLease.id,
+      });
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 function successfulResult(): ExecutionResult {
@@ -215,7 +292,12 @@ function capabilities(): WorkerCapabilities {
     os: "linux",
     architecture: "x64",
     cpuCount: 4,
+    nodeVersion: process.version,
+    npmVersion: "11.0.0",
+    workerVersion: "0.1.0",
+    processId: process.pid,
     memoryBytes: 8_000_000_000,
+    availableMemoryBytes: 4_000_000_000,
     freeDiskBytes: 20_000_000_000,
     dockerAvailable: false,
     codexAvailable: false,
@@ -224,12 +306,14 @@ function capabilities(): WorkerCapabilities {
     supportedLanguages: ["JavaScript/TypeScript"],
     installedTools: ["git"],
     mcpServers: [],
-    executors: ["demo"],
+    executors: ["worker-smoke"],
     maxConcurrentJobs: 1,
   };
 }
 
 function jobEnvelope(workerId: string): JobEnvelope {
+  const permissionStartsAt = new Date(Date.now() - 1_000).toISOString();
+  const permissionExpiresAt = new Date(Date.now() + 60_000).toISOString();
   return {
     protocolVersion: WORKER_PROTOCOL_VERSION,
     taskId: randomUUID(),
@@ -239,8 +323,42 @@ function jobEnvelope(workerId: string): JobEnvelope {
     workerId,
     leaseToken: "lease-token-that-is-at-least-thirty-two-characters",
     leaseExpiresAt: new Date(Date.now() + 45_000).toISOString(),
-    executor: { kind: "demo" },
-    workflow: { id: "TEST_AND_FIX", version: 1, allowedCommandIds: ["NPM_TEST"] },
+    taskContract: { id: randomUUID(), version: 1, sha256: "a".repeat(64) },
+    permissionLease: {
+      id: randomUUID(),
+      version: 1,
+      status: "ACTIVE",
+      startsAt: permissionStartsAt,
+      expiresAt: permissionExpiresAt,
+      scope: {
+        allowedActions: [
+          "create_job_workspace",
+          "write_hello_txt",
+          "calculate_sha256",
+          "upload_artifact",
+          "report_progress",
+          "cleanup_workspace",
+        ],
+        deniedActions: [
+          "git",
+          "network",
+          "arbitrary_shell",
+          "production_deploy",
+          "delete_outside_workspace",
+          "read_home_directory",
+          "read_other_jobs",
+          "read_credentials",
+        ],
+        allowedPaths: ["$JOB_WORKSPACE"],
+        allowedDomains: [],
+        maxArtifactBytes: 1_000_000,
+        maxRuntimeSeconds: 60,
+        maxApiBudget: 0,
+        humanApprovalActions: [],
+      },
+    },
+    executor: { kind: "worker-smoke" },
+    workflow: { id: "WORKER_SMOKE_V1", version: 1, allowedCommandIds: [] },
     task: {
       title: "Fix tests",
       problemDescription: "The authentication test suite has a deterministic failure.",
@@ -248,7 +366,7 @@ function jobEnvelope(workerId: string): JobEnvelope {
       scopeSummary: "Fix the scoped failure.",
       acceptanceChecks: [],
     },
-    repository: { mode: "demo", owner: "donelayer", name: "demo", targetBranch: "main" },
+    repository: { mode: "none" },
     permissions: { modifyCode: true, createPullRequest: false, humanApprovalRequired: true },
     limits: {
       timeoutMs: 60_000,

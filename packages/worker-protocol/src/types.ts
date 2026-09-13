@@ -1,6 +1,8 @@
 export const WORKER_PROTOCOL_VERSION = "1.0" as const;
 
 export const WORKFLOW_TEMPLATE_IDS = [
+  "WORKER_SMOKE_V1",
+  "REPOSITORY_MATERIALIZE_V1",
   "DIAGNOSE_REPOSITORY",
   "BUILD_RESCUE",
   "TEST_AND_FIX",
@@ -33,9 +35,49 @@ export const SAFE_COMMAND_IDS = [
 ] as const;
 
 export type SafeCommandId = (typeof SAFE_COMMAND_IDS)[number];
-export type ExecutorKind = "demo" | "codex-cli";
+export type ExecutorKind = "worker-smoke" | "repository-materializer" | "demo" | "codex-cli";
 export type WorkerStatus = "ONLINE" | "BUSY" | "OFFLINE" | "SUSPENDED";
 export type OperatingSystem = "windows" | "macos" | "linux" | "unknown";
+
+export type PermissionScope = {
+  allowedActions: string[];
+  deniedActions: string[];
+  allowedPaths: string[];
+  allowedDomains: string[];
+  allowedRepositories?: string[] | undefined;
+  allowedBranches?: string[] | undefined;
+  allowedCommitShas?: string[] | undefined;
+  allowedSandboxProviders?: string[] | undefined;
+  allowedExecutionBackends?: string[] | undefined;
+  allowedWorkflows?: string[] | undefined;
+  allowedFiles?: string[] | undefined;
+  allowedEnvironmentVariables?: string[] | undefined;
+  maxArtifactBytes: number;
+  maxRuntimeSeconds: number;
+  maxApiBudget: number;
+  maxSandboxes?: number | undefined;
+  maxCommands?: number | undefined;
+  maxStdoutBytes?: number | undefined;
+  maxStderrBytes?: number | undefined;
+  networkPolicy?: "deny-all" | undefined;
+  persistence?: "none" | undefined;
+  humanApprovalActions: string[];
+};
+
+export type TaskContractReference = {
+  id: string;
+  version: number;
+  sha256: string;
+};
+
+export type PermissionLeaseEnvelope = {
+  id: string;
+  version: number;
+  status: "ACTIVE";
+  startsAt: string;
+  expiresAt: string;
+  scope: PermissionScope;
+};
 
 export type McpServerCapability = {
   name: string;
@@ -51,7 +93,12 @@ export type WorkerCapabilities = {
   os: OperatingSystem;
   architecture: string;
   cpuCount: number;
+  nodeVersion: string;
+  npmVersion: string | null;
+  workerVersion: string;
+  processId: number;
   memoryBytes: number;
+  availableMemoryBytes: number;
   freeDiskBytes: number;
   dockerAvailable: boolean;
   codexAvailable: boolean;
@@ -63,6 +110,33 @@ export type WorkerCapabilities = {
   executors: ExecutorKind[];
   maxConcurrentJobs: number;
 };
+
+export type RepositoryEnvelope =
+  | {
+      mode: "none";
+    }
+  | {
+      mode: "demo";
+      owner: string;
+      name: string;
+      targetBranch: string;
+    }
+  | {
+      mode: "allowlisted-github";
+      remoteUrl: string;
+      owner: string;
+      name: string;
+      targetBranch: string;
+    }
+  | {
+      mode: "github-app";
+      repositoryId: string;
+      owner: string;
+      name: string;
+      targetBranch: string;
+      commitSha: string;
+      archiveUrl: string;
+    };
 
 export type PairWorkerRequest = {
   protocolVersion: typeof WORKER_PROTOCOL_VERSION;
@@ -111,7 +185,13 @@ export type AcceptanceCheckType =
   | "PULL_REQUEST"
   | "URL_HEALTH"
   | "SCREENSHOT"
-  | "HUMAN_APPROVAL";
+  | "HUMAN_APPROVAL"
+  | "JOB_CLAIMED"
+  | "LEASE_ACTIVE"
+  | "ARTIFACT"
+  | "SHA256"
+  | "WORKSPACE_CLEANED"
+  | "PERMISSION";
 
 export type AcceptanceCheck = {
   id: string;
@@ -130,6 +210,8 @@ export type JobEnvelope = {
   workerId: string;
   leaseToken: string;
   leaseExpiresAt: string;
+  taskContract: TaskContractReference;
+  permissionLease: PermissionLeaseEnvelope;
   executor: {
     kind: ExecutorKind;
     model?: string | undefined;
@@ -146,21 +228,19 @@ export type JobEnvelope = {
     scopeSummary: string;
     acceptanceChecks: AcceptanceCheck[];
   };
-  repository: {
-    mode: "demo" | "github-app";
-    owner: string;
-    name: string;
-    targetBranch: string;
-    commitSha?: string | undefined;
-    archiveUrl?: string | undefined;
-  };
+  repository: RepositoryEnvelope;
   permissions: JobPermissions;
   limits: JobLimits;
 };
 
 export type JobRunEventType =
   | "WORKSPACE_PREPARED"
+  | "PERMISSION_VIOLATION"
   | "EXECUTOR_STARTED"
+  | "REPOSITORY_CLONE_STARTED"
+  | "REPOSITORY_CLONE_COMPLETED"
+  | "REMOTE_METADATA_CAPTURED"
+  | "FILE_MANIFEST_CREATED"
   | "PROGRESS"
   | "LOG"
   | "FILE_CHANGED"
@@ -228,6 +308,21 @@ export type ExecutionResult = {
   tests?: TestSummary | undefined;
   buildSucceeded?: boolean | undefined;
   pullRequestUrl?: string | undefined;
+  repositoryMaterialization?: {
+    remoteUrl: string;
+    branch: string;
+    commitSha: string;
+    cloneStartedAt: string;
+    cloneFinishedAt: string;
+    cloneExitCode: number;
+    cloneDurationMs: number;
+    cloneArguments: string[];
+    cloneStdout: string;
+    cloneStderr: string;
+    fileCount: number;
+    manifestSha256: string;
+    noRepositoryCodeExecuted: true;
+  } | undefined;
   artifacts: ProducedArtifact[];
 };
 

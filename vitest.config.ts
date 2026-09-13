@@ -6,6 +6,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      "@": `${root}apps/web/src`,
       "@donelayer/shared": `${root}packages/shared/src/index.ts`,
       "@donelayer/task-state-machine": `${root}packages/task-state-machine/src/index.ts`,
       "@donelayer/matching": `${root}packages/matching/src/index.ts`,

@@ -22,7 +22,7 @@ import { z } from "zod";
 
 const artifactInitResponseSchema = z.object({
   artifactId: z.string().uuid(),
-  uploadUrl: z.string().url(),
+  uploadUrl: z.string().min(1).max(2_048),
   uploadHeaders: z.record(z.string(), z.string()).default({}),
 });
 
@@ -53,7 +53,7 @@ export class WorkerApiClient {
     private readonly options: {
       requestTimeoutMs?: number;
       artifactUploadTimeoutMs?: number;
-      allowedArtifactUploadHosts?: string[];
+      allowedArtifactUploadOrigins?: string[];
     } = {},
   ) {
     this.apiUrl = new URL(apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`);
@@ -127,6 +127,7 @@ export class WorkerApiClient {
     artifact: ProducedArtifact,
     signal?: AbortSignal,
   ): Promise<UploadedArtifact> {
+    if (!this.identity) throw new Error("Worker is not paired");
     const digest = sha256(artifact.bytes);
     const initialized = artifactInitResponseSchema.parse(
       await this.request(`api/worker/job-runs/${encodeURIComponent(jobRunId)}/artifacts/init`, {
@@ -144,13 +145,18 @@ export class WorkerApiClient {
       }),
     );
 
-    const uploadUrl = this.validateArtifactUploadUrl(initialized.uploadUrl);
+    const uploadUrl = this.validateArtifactUploadUrl(initialized.uploadUrl, initialized.artifactId);
     const uploadTimeout = AbortSignal.timeout(this.options.artifactUploadTimeoutMs ?? 60_000);
     const uploadSignal = signal ? AbortSignal.any([signal, uploadTimeout]) : uploadTimeout;
+    const uploadHeaders = new Headers(initialized.uploadHeaders);
+    uploadHeaders.set("authorization", `Bearer ${this.identity.workerToken}`);
+    uploadHeaders.set("content-type", artifact.mimeType);
+    uploadHeaders.set("x-donelayer-lease-token", leaseToken);
+    uploadHeaders.set("x-donelayer-worker-id", this.identity.workerId);
     const uploadResponse = await this.fetchImpl(uploadUrl, {
       method: "PUT",
       body: Buffer.from(artifact.bytes),
-      headers: { "content-type": artifact.mimeType, ...initialized.uploadHeaders },
+      headers: uploadHeaders,
       redirect: "error",
       signal: uploadSignal,
     });
@@ -254,8 +260,8 @@ export class WorkerApiClient {
     }
   }
 
-  private validateArtifactUploadUrl(value: string): URL {
-    const url = new URL(value);
+  private validateArtifactUploadUrl(value: string, artifactId: string): URL {
+    const url = new URL(value, this.apiUrl);
     if (url.username || url.password) {
       throw new Error("Artifact upload URL must not contain credentials");
     }
@@ -264,18 +270,37 @@ export class WorkerApiClient {
     if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
       throw new Error("Artifact upload URL must use HTTPS");
     }
-    const configuredHosts = [
-      ...(this.options.allowedArtifactUploadHosts ?? []),
-      ...(process.env.DONELAYER_ARTIFACT_UPLOAD_HOSTS ?? "").split(","),
+    const configuredOrigins = [
+      ...(this.options.allowedArtifactUploadOrigins ?? []),
+      ...(process.env.DONELAYER_ARTIFACT_UPLOAD_ORIGINS ?? "").split(","),
     ]
-      .map((host) => host.trim().toLowerCase())
+      .map((origin) => origin.trim())
       .filter(Boolean);
-    const allowedHosts = new Set([
-      this.apiUrl.hostname.replace(/^\[|\]$/g, "").toLowerCase(),
-      ...configuredHosts,
-    ]);
-    if (!allowedHosts.has(uploadHostname.toLowerCase())) {
-      throw new Error("Artifact upload host is not allowlisted");
+    const allowedOrigins = new Set([this.apiUrl.origin]);
+    for (const configuredOrigin of configuredOrigins) {
+      const allowed = new URL(configuredOrigin);
+      if (
+        allowed.username ||
+        allowed.password ||
+        allowed.pathname !== "/" ||
+        allowed.search ||
+        allowed.hash
+      ) {
+        throw new Error("Artifact upload allowlist entries must be origins");
+      }
+      const allowedHostname = allowed.hostname.replace(/^\[|\]$/g, "");
+      const allowedLocal = ["localhost", "127.0.0.1", "::1"].includes(allowedHostname);
+      if (allowed.protocol !== "https:" && !(allowedLocal && allowed.protocol === "http:")) {
+        throw new Error("Artifact upload origins must use HTTPS");
+      }
+      allowedOrigins.add(allowed.origin);
+    }
+    if (!allowedOrigins.has(url.origin)) {
+      throw new Error("Artifact upload origin is not allowlisted");
+    }
+    const expectedPath = `/api/worker/uploads/${encodeURIComponent(artifactId)}`;
+    if (url.pathname !== expectedPath || url.search || url.hash) {
+      throw new Error("Artifact upload URL path is invalid");
     }
     return url;
   }

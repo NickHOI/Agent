@@ -1,17 +1,38 @@
-import { CheckCircle2, CircleDollarSign, Clock3, Gauge, PlayCircle, ShieldCheck } from "lucide-react";
+import { Bot, CheckCircle2, CircleDollarSign, Clock3, FileCheck2, Gauge, KeyRound, PlayCircle, ShieldCheck } from "lucide-react";
 import { getDemoStore } from "@donelayer/database";
 import { AppShell } from "@/components/app-shell";
 import { DemoLaunchButton } from "@/components/dashboard/demo-launch-button";
 import { TaskTable } from "@/components/dashboard/task-table";
+import { WorkspaceWorkTable } from "@/components/tasks/workspace-work-table";
+import { ButtonLink } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { formatCurrency } from "@/lib/format";
 import { requirePageActor } from "@/server/authorization";
+import { listWorkspaceAgents, listWorkspaceWorks } from "@/server/trust-workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function CustomerDashboard() {
   const actor = await requirePageActor(["CUSTOMER", "ADMIN"]);
+  if (process.env.APP_MODE === "supabase") {
+    const [agents, work] = await Promise.all([listWorkspaceAgents(actor), listWorkspaceWorks(actor)]);
+    const approved = work.filter((item) => item.authority).length;
+    const receipts = work.filter((item) => item.receipt?.integrity === "VALID" && item.receipt.historyStatus === "VERIFIED_WORK").length;
+    const awaiting = work.length - approved;
+    return (
+      <AppShell currentPath="/customer" title={`Welcome back, ${actor.name.split(" ")[0]}`} actions={<ButtonLink href="/tasks/new" size="sm">Create Work</ButtonLink>}>
+        <p className="mb-5 max-w-2xl text-sm leading-6 text-[#969da8]">Your private Beta workspace keeps Agent identity, Contract, Authority, execution, independent verification, and delivery history as separate durable facts.</p>
+        <section className="grid overflow-hidden rounded-[6px] border border-[#2a2e36] bg-[#111318] sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Agents" value={String(agents.length)} detail="Controller-owned identities" icon={<Bot className="size-4" />} />
+          <Metric label="Work" value={String(work.length)} detail="Locked requests" icon={<FileCheck2 className="size-4" />} />
+          <Metric label="Authority pending" value={String(awaiting)} detail={`${approved} approved`} icon={<KeyRound className="size-4" />} />
+          <Metric label="Verified Work" value={String(receipts)} detail="No Demo or Gate history counted" icon={<ShieldCheck className="size-4" />} />
+        </section>
+        <div className="mt-5"><Panel className="overflow-hidden"><PanelHeader title="Recent Work" description="Durable Supabase state" /><WorkspaceWorkTable work={work.slice(0, 8)} /></Panel></div>
+      </AppShell>
+    );
+  }
   const snapshot = getDemoStore().getDashboardSnapshot();
   const completed = snapshot.tasks.filter((task) => task.status === "COMPLETED").length;
   const verified = snapshot.tasks.filter((task) => task.status === "VERIFICATION_PASSED" || task.status === "CUSTOMER_REVIEW" || task.status === "COMPLETED").length;
