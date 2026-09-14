@@ -1,5 +1,30 @@
 # DoneLayer Product Reality Audit
 
+## Gate 4A-P Canonical Orchestration update (2026-09-14)
+
+**GATE 4A-P passes as a local infrastructure prerequisite only.** The product
+execute route no longer directly selects the Beta Gate 3 orchestrator. It uses
+a closed server registry, while the Beta executor persists through new
+canonical service-only prepare/finalize/fail commands. Preparation locks the
+Work row and atomically binds the locked Contract, approved Authority, exact
+Source, workflow source, Assignment, Job, and both Leases into an append-only
+execution envelope.
+
+| Capability | Current classification | Objective evidence | Boundary still in force |
+| --- | --- | --- | --- |
+| Workflow dispatch | **REAL in code/local tests** | Closed registry contains only Beta Gate 3 and Gate 4A; arbitrary workflow rejected | Gate 4A executor remains precheck-only |
+| Canonical preparation | **LOCAL CONTRACT PASS** | Owner/hash/lineage/source/file/action/network/limit negatives; concurrency and stale-retry tests | Migration not yet applied to non-production Postgres |
+| Immutable envelope | **LOCAL CONTRACT PASS** | Append-only table/triggers, canonical text/hash check, Contract/Authority/Source/Job/Lease bindings | No live row exists; 0 Jobs created |
+| Finalization | **LOCAL CONTRACT PASS** | Independent-verifier failure, lineage mismatch, incomplete Evidence, cleanup, and policy-violation rejection | No Gate 4A execution or Receipt occurred |
+| Failure | **LOCAL CONTRACT PASS** | Idempotent replay, preserved reason, append-only audit, Lease closure, success-protection tests | No live failure row was created |
+| Migration | **LOCAL POSTGRES/CONTRACT PASS; LIVE UNAPPLIED** | Complete ten-migration clean application; transactional prepare/replay/verifier-failure/fail/rollback probe; SQL security contracts | Supabase CLI stopped at missing access token before link/apply |
+| Gate 3 compatibility | **PRESERVED** | Historical migration SHA unchanged; classification locked at `NOT_VERIFIED / BETA_GATE_VALIDATION / 0 / 0` | Historical rows were not mutated |
+| Gate 4A candidate | **UNCHANGED DRAFT** | Three approved feature files remain byte-identical | Contract unlocked; feature absent; new source binding awaits Owner review |
+
+This prerequisite made zero model requests, Sandboxes, Jobs, Receipts, corpus
+entries, or Reputation calculations. It is `INFRASTRUCTURE_VALIDATION`, never a
+Real Job, and contributes zero.
+
 ## Task-Scoped Agent Authority V1 Gate update (2026-09-03)
 
 **TASK-SCOPED AGENT AUTHORITY V1 DESIGN AND EVIDENCE GATE passed at one narrow

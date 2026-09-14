@@ -1,6 +1,6 @@
 # DoneLayer Implementation Status
 
-Last updated: 2026-09-13
+Last updated: 2026-09-14
 
 Status legend:
 
@@ -21,6 +21,21 @@ This status file marks capabilities complete only when repository evidence
 proves them. Roadmap realignment does not make future Reputation, external
 HOL/UAID or ERC-8004 verification, x402, real payment, or organizational
 features implemented.
+
+## Gate 4A-P Canonical Orchestration Prerequisite
+
+- [x] Canonical server workflow registry permits only historical Beta Gate 3 plus the future Gate 4A identifier; arbitrary workflow strings never become commands
+- [x] Execute route resolves the locked Contract workflow through the registry; Gate 4A remains precheck-only pending separate Owner execution approval
+- [x] Service-only prepare validates owner, Work, locked Contract/hash, approved Authority/hash, Assignment/Agent, exact repository/Commit/tree, file/action/network scope, and limits before any Job
+- [x] Task-row locking plus a stable unique idempotency key prevents duplicate concurrent Jobs and makes stale retry deterministic
+- [x] Immutable execution envelope binds Contract, Authority, Source, workflow source, Assignment, Job, Worker Lease, Permission Lease, and policy snapshot
+- [x] Finalize requires exact active ownership, complete linked Evidence/Artifacts, every required acceptance check passed independently, both Sandbox cleanups, and no unresolved violation
+- [x] Failure is server-only, append-only, idempotent, preserves its reason, closes both Leases, and cannot replace success
+- [x] Historical Gate 3 migration is byte-identical; future Gate 3 execution uses a compatibility wrapper and remains `NOT_VERIFIED / BETA_GATE_VALIDATION / 0 / 0`
+- [x] Approved Gate 4A candidate implementation files remain byte-identical; no bundle, verifier, download behavior, or tamper logic was implemented
+- [x] Local PostgreSQL clean migration application and rollback probe, focused 31/31 tests, full 386 active tests with 14 established skips, lint, strict typecheck, and Web/Worker builds pass
+- [ ] Non-production migration apply and catalog/readback are pending because Supabase CLI authentication is unavailable; no database project was linked or changed
+- [ ] Gate 4A Contract remains unlocked; Jobs, corpus entries, model requests, Sandboxes, and Reputation calculations all remain 0
 
 ## Gate 4A Real Corpus Eligibility
 

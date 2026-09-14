@@ -1,13 +1,13 @@
 import { getActor } from "@/server/auth";
-import { BetaGate3Orchestrator } from "@/server/beta-gate-3/orchestrator";
 import { noStoreJson } from "@/server/http-security";
 import { getWorkspaceWork } from "@/server/trust-workspace";
+import { runCanonicalVerifiedWorkExecution } from "@/server/verified-work-execution/orchestrator";
 
 export const maxDuration = 800;
 
 export async function POST(_request: Request, context: { params: Promise<{ taskId: string }> }) {
   if (process.env.APP_MODE !== "supabase") {
-    return noStoreJson({ error: "Gate 3 execution is unavailable in Demo mode." }, { status: 404 });
+    return noStoreJson({ error: "Verified Work execution is unavailable in Demo mode." }, { status: 404 });
   }
   const actor = await getActor();
   if (!actor) return noStoreJson({ error: "Authentication required." }, { status: 401 });
@@ -20,22 +20,23 @@ export async function POST(_request: Request, context: { params: Promise<{ taskI
   if (
     work.status !== "PUBLISHED" ||
     !work.contract ||
-    work.contract.version !== 2 ||
+    work.contract.version < 1 ||
     work.contract.status !== "LOCKED" ||
     !work.authority ||
     work.authority.decision !== "APPROVED" ||
     work.execution.state !== "NOT_STARTED"
   ) {
-    return noStoreJson({ error: "Work is not at the approved Gate 3 start boundary." }, { status: 409 });
+    return noStoreJson({ error: "Work is not at the approved canonical execution boundary." }, { status: 409 });
   }
   try {
-    const outcome = await new BetaGate3Orchestrator().run({
+    const outcome = await runCanonicalVerifiedWorkExecution({
       ownerAuthUserId: actor.id,
       taskId: work.id,
       contractId: work.contract.id,
       contractSha256: work.contract.sha256,
       authorityId: work.authority.id,
       authorityScopeSha256: work.authority.scopeSha256,
+      workflow: work.contract.allowedWorkflow,
     });
     return noStoreJson({
       taskId: outcome.taskId,

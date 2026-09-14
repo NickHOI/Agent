@@ -47,6 +47,7 @@ export type PermissionScope = {
   allowedRepositories?: string[] | undefined;
   allowedBranches?: string[] | undefined;
   allowedCommitShas?: string[] | undefined;
+  allowedTreeShas?: string[] | undefined;
   allowedSandboxProviders?: string[] | undefined;
   allowedExecutionBackends?: string[] | undefined;
   allowedWorkflows?: string[] | undefined;

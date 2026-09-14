@@ -605,6 +605,23 @@ The completed local policy/evidence boundary is recorded in
 `../REAL_JOB_CLASSIFICATION_POLICY_V1_REPORT.md`; it made no canonical count or
 Reputation change.
 
+### Gate 4A-P Canonical Execution Prerequisite - 2026-09-14
+
+The Owner-authorized infrastructure prerequisite replaces the product's
+Beta-Gate-3-only execution/persistence call site with a minimal canonical
+boundary. Server-side preparation derives one immutable Job envelope from a
+locked Contract, approved task-scoped Authority, exact repository/Commit/tree,
+registered workflow, Assignment/Agent lineage, and bounded policy. Finalization
+requires independent verification, complete Evidence, cleanup, and no policy
+violation; failure and retry rules are explicit and idempotent.
+
+This prerequisite does not advance the corpus ramp. The approved
+`EXTERNAL REVIEW EXPORT BUNDLE V1` candidate remains unimplemented and unlocked;
+Gate 4A, Gate 4B, Gate 4C, and Phase 4 Reputation remain in their locked order.
+Local migration validation passed, while non-production apply/readback remains
+pending because the Supabase CLI is not authenticated. Zero Jobs, model calls,
+Sandboxes, corpus entries, and Reputation calculations were created.
+
 ## LATER - Phase 5: Agent Budget And Payments
 
 **Status: FUTURE / GATED; NO REAL PAYMENT AUTHORIZED**
@@ -830,14 +847,13 @@ and permits canonical contribution only after external audit acceptance.
 
 ## Exact Next Step
 
-Beta Gates 1-3 are complete within their recorded boundaries, and Beta Gate 3
-external review is accepted with one non-blocking evidence-depth condition.
-Gate 4A is now Owner authorized, and its corpus eligibility rules have a local
-deterministic projection and integrity checker. Next select one genuinely
-necessary work item whose need exists independently of the Reputation
-threshold. Bind its requirement source, rationale, task type, acceptance
-criteria, Source, authority, and delivery policy before execution. Current
-active canonical count is zero and the Gate 4C gap is 20.
+Beta Gates 1-3 are complete within their recorded boundaries, and Gate 4A-P has
+a locally validated canonical execution source boundary. The immediate next
+step is Owner review of the new immutable prerequisite baseline, followed by an
+authenticated non-production migration apply/catalog readback and explicit
+approval of the Gate 4A candidate's new exact Commit/tree binding before its
+Contract is locked. Current active canonical count is zero and the Gate 4C gap
+is 20.
 
 Do not start Reputation before Gate 4C and its Readiness Review pass. Do not
 merge either Fixture PR, deploy, enable real payment, begin portable attestation

@@ -122,6 +122,7 @@ export type WorkspaceContract = {
   lockedAt: string;
   desiredOutcome: string;
   deliverables: string[];
+  allowedWorkflow: string;
   allowedActions: string[];
   forbiddenActions: string[];
   allowedPaths: string[];
@@ -452,6 +453,7 @@ function contractFromRow(row: Row): WorkspaceContract {
     lockedAt: textOf(row.locked_at || row.created_at),
     desiredOutcome: textOf(document.desiredOutcome),
     deliverables: stringArray(document.deliverables),
+    allowedWorkflow: textOf(document.allowedWorkflow),
     allowedActions: stringArray(document.allowedActions),
     forbiddenActions: stringArray(document.forbiddenActions),
     allowedPaths: stringArray(authorityPolicy.allowedPaths),

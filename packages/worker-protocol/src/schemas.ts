@@ -64,6 +64,7 @@ export const permissionScopeSchema = z.object({
   allowedRepositories: z.array(nonEmpty).max(20).optional(),
   allowedBranches: z.array(nonEmpty).max(20).optional(),
   allowedCommitShas: z.array(z.string().regex(/^[a-f0-9]{40}$/)).max(20).optional(),
+  allowedTreeShas: z.array(z.string().regex(/^[a-f0-9]{40}$/)).max(20).optional(),
   allowedSandboxProviders: z.array(nonEmpty).max(10).optional(),
   allowedExecutionBackends: z.array(nonEmpty).max(10).optional(),
   allowedWorkflows: z.array(nonEmpty).max(20).optional(),

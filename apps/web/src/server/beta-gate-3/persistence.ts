@@ -1,8 +1,15 @@
 import "server-only";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { BETA_GATE_3_PRODUCT_REMOTE_URL } from "@donelayer/worker-protocol";
 
-import { createSupabaseCommandClient } from "../supabase-auth";
+import { BETA_GATE_3_CANONICAL_WORKFLOW } from "../verified-work-execution/contract";
+import type { CanonicalPreparedExecution } from "../verified-work-execution/lifecycle";
+import {
+  SupabaseVerifiedWorkExecutionPersistence,
+  type FinalizeVerifiedWorkExecutionRequest,
+  type VerifiedWorkArtifactWrite,
+  type VerifiedWorkLedgerWrite,
+} from "../verified-work-execution/persistence";
 import {
   parseBetaGate3PreparedLifecycle,
   type BetaGate3PreparedLifecycle,
@@ -16,76 +23,19 @@ export type BetaGate3PrepareRequest = {
   authorityId: string;
   authorityScopeSha256: string;
   sourceCommit: string;
-  jobRunId: string;
-  workerId: string;
-  workerLeaseId: string;
-  permissionLeaseId: string;
 };
 
-export type BetaGate3ArtifactWrite = {
-  id: string;
-  artifactType: "PATCH" | "TEST_LOG" | "VERIFICATION_REPORT" | "OTHER";
-  fileName: string;
-  mimeType: "text/plain" | "application/json";
-  sizeBytes: number;
-  sha256: string;
-  storagePath: string;
-  metadata: Record<string, unknown>;
-};
+export type BetaGate3ArtifactWrite = VerifiedWorkArtifactWrite;
+export type BetaGate3LedgerWrite = VerifiedWorkLedgerWrite;
 
-export type BetaGate3LedgerWrite = {
-  id: string;
-  taskId: string;
-  jobRunId: string;
-  sequenceNumber: number;
-  entryType: string;
-  sourceRecordType: string;
-  sourceRecordId: string;
-  payloadSha256: string;
-  previousEntrySha256: string | null;
-  entrySha256: string;
-  createdAt: string;
-};
-
-export type BetaGate3FinalizeRequest = {
-  ownerAuthUserId: string;
-  taskId: string;
-  jobRunId: string;
-  workerId: string;
-  workerLeaseId: string;
-  permissionLeaseId: string;
-  patchSha256: string;
-  changedFiles: string[];
-  jobResult: Record<string, unknown>;
-  artifacts: BetaGate3ArtifactWrite[];
-  verification: {
-    id: string;
-    verifierVersion: string;
-    startedAt: string;
-    finishedAt: string;
-    summary: string;
-    metadata: Record<string, unknown>;
-    checks: Array<{
-      id: string;
-      acceptanceCheckId: string;
-      status: "PASSED";
-      summary: string;
-      expected: Record<string, unknown>;
-      actual: Record<string, unknown>;
-    }>;
-  };
-  ledgerEntries: BetaGate3LedgerWrite[];
-  receipt: {
-    id: string;
-    publicId: string;
-    sha256: string;
-    evidenceChainSha256: string;
-    document: Record<string, unknown>;
-  };
-};
+export type BetaGate3FinalizeRequest = Omit<
+  FinalizeVerifiedWorkExecutionRequest,
+  "contractId" | "contractSha256" | "authorityId" | "authorityScopeSha256" | "envelopeSha256"
+>;
 
 export type BetaGate3FinalizedLifecycle = {
   finalized: true;
+  replayed: boolean;
   taskId: string;
   jobRunId: string;
   permissionLeaseId: string;
@@ -100,35 +50,53 @@ export type BetaGate3FinalizedLifecycle = {
 };
 
 export class SupabaseBetaGate3Persistence {
-  constructor(private readonly client: SupabaseClient = createSupabaseCommandClient()) {}
+  private prepared: CanonicalPreparedExecution | null = null;
+  private preparedOwnerAuthUserId: string | null = null;
+
+  constructor(
+    private readonly canonical = new SupabaseVerifiedWorkExecutionPersistence(),
+  ) {}
 
   async prepare(request: BetaGate3PrepareRequest): Promise<BetaGate3PreparedLifecycle> {
-    const { data, error } = await this.client.rpc("rpc_prepare_beta_gate_3_job", {
-      p_request: request,
+    const prepared = await this.canonical.prepare({
+      ownerAuthUserId: request.ownerAuthUserId,
+      taskId: request.taskId,
+      contractId: request.contractId,
+      contractSha256: request.contractSha256,
+      authorityId: request.authorityId,
+      authorityScopeSha256: request.authorityScopeSha256,
+      sourceRepository: BETA_GATE_3_PRODUCT_REMOTE_URL,
+      sourceCommit: request.sourceCommit,
+      sourceTree: null,
+      workflow: BETA_GATE_3_CANONICAL_WORKFLOW,
     });
-    if (error) throw new Error(`BETA_GATE_3_PREPARE_FAILED:${safeCode(error.message)}`);
-    return parseBetaGate3PreparedLifecycle(data);
+    if (prepared.reused) throw new Error("BETA_GATE_3_EXISTING_EXECUTION_REQUIRES_OPERATOR_REVIEW");
+    this.prepared = prepared;
+    this.preparedOwnerAuthUserId = request.ownerAuthUserId;
+    return parseBetaGate3PreparedLifecycle({
+      ...prepared,
+      sourceCommit: prepared.source.commitSha,
+    });
   }
 
   async finalize(request: BetaGate3FinalizeRequest): Promise<BetaGate3FinalizedLifecycle> {
-    const { data, error } = await this.client.rpc("rpc_finalize_beta_gate_3_job", {
-      p_result: request,
+    const prepared = this.requirePrepared(request.taskId, request.jobRunId);
+    return this.canonical.finalize({
+      ...request,
+      jobResult: {
+        ...request.jobResult,
+        canonicalEnvelopeSha256: prepared.envelopeSha256,
+        contractSha256: prepared.contractSha256,
+        authorityScopeSha256: prepared.authorityScopeSha256,
+        requiredEvidenceComplete: true,
+        unresolvedPolicyViolations: [],
+      },
+      contractId: prepared.contractId,
+      contractSha256: prepared.contractSha256,
+      authorityId: prepared.authorityId,
+      authorityScopeSha256: prepared.authorityScopeSha256,
+      envelopeSha256: prepared.envelopeSha256,
     });
-    if (error) throw new Error(`BETA_GATE_3_FINALIZE_FAILED:${safeCode(error.message)}`);
-    const value = recordOf(data) as Partial<BetaGate3FinalizedLifecycle>;
-    if (
-      value.finalized !== true ||
-      value.taskId !== request.taskId ||
-      value.jobRunId !== request.jobRunId ||
-      value.permissionLeaseId !== request.permissionLeaseId ||
-      value.receiptId !== request.receipt.id ||
-      value.receiptPublicId !== request.receipt.publicId ||
-      value.receiptSha256 !== request.receipt.sha256 ||
-      value.evidenceChainSha256 !== request.receipt.evidenceChainSha256 ||
-      value.finalStatus !== "COMPLETED" ||
-      value.deliveryOutcome !== "VERIFIED_DELIVERY"
-    ) throw new Error("BETA_GATE_3_FINALIZE_RESPONSE_INVALID");
-    return value as BetaGate3FinalizedLifecycle;
   }
 
   async failClosed(request: {
@@ -137,21 +105,25 @@ export class SupabaseBetaGate3Persistence {
     failureCode: string;
     executionOutcome: "FAILED" | "INCONCLUSIVE" | "TIMEOUT" | "PROVIDER_FAILURE";
   }): Promise<void> {
-    const { data, error } = await this.client.rpc("rpc_fail_beta_gate_3_job", {
-      p_failure: request,
+    const prepared = this.requirePrepared(request.taskId, request.jobRunId);
+    if (!this.preparedOwnerAuthUserId) throw new Error("BETA_GATE_3_OWNER_BINDING_MISSING");
+    await this.canonical.failClosed({
+      ownerAuthUserId: this.preparedOwnerAuthUserId,
+      taskId: request.taskId,
+      jobRunId: request.jobRunId,
+      contractId: prepared.contractId,
+      authorityId: prepared.authorityId,
+      envelopeSha256: prepared.envelopeSha256,
+      failureCode: request.failureCode,
+      failureReason: request.failureCode,
+      executionOutcome: request.executionOutcome,
     });
-    if (error || recordOf(data).failedClosed !== true) {
-      throw new Error(`BETA_GATE_3_FAIL_CLOSED_PERSISTENCE_FAILED:${safeCode(error?.message ?? "invalid response")}`);
-    }
   }
-}
 
-function recordOf(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function safeCode(value: string): string {
-  return value.split(":", 1)[0]!.replace(/[^A-Z0-9_-]/gi, "_").slice(0, 120);
+  private requirePrepared(taskId: string, jobRunId: string): CanonicalPreparedExecution {
+    if (!this.prepared || this.prepared.taskId !== taskId || this.prepared.jobRunId !== jobRunId) {
+      throw new Error("BETA_GATE_3_CANONICAL_PREPARATION_MISSING");
+    }
+    return this.prepared;
+  }
 }

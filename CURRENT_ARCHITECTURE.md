@@ -24,6 +24,38 @@ as a competitor, ecosystem, and optional interoperability target. The later
 Identity Gate added typed ERC-8004 and HOL/UAID references only; it did not
 connect either external ecosystem, Reputation, payment, or a blockchain.
 
+## Canonical Verified-Work Execution update (2026-09-14)
+
+The Supabase-mode execute route now crosses one closed workflow registry before
+selecting an executor. The historical Beta Gate 3 executor remains the only
+live feature executor, but its persistence wrapper now calls canonical
+service-only primitives:
+
+```text
+authenticated Work owner
+-> server workflow registry
+-> locked Contract + approved task Authority + exact Source validation
+-> atomic Assignment / Job / Worker Lease / Permission Lease
+-> immutable canonical execution envelope and audit events
+-> executor and independent verifier
+-> strict canonical finalization or idempotent fail-closed transition
+```
+
+`verified_work_execution_envelopes` binds the Contract ID/hash, Authority
+ID/scope hash, repository, Commit, optional tree, registered workflow source,
+permission snapshot, Assignment, Job, and Lease identities. Preparation holds a
+Work-row lock and uses a unique stable idempotency key. Finalization rechecks the
+same immutable lineage, active ownership, Evidence/Artifact links, required
+acceptance checks, independent verification, cleanup, and policy-violation
+state. Failure appends audit Evidence, preserves the reason, and closes Leases.
+
+The migration and runtime boundary are locally validated but not live-applied:
+Supabase CLI authentication was unavailable before any project link or change.
+The Gate 4A workflow is registered for side-effect-free precheck only; its
+feature executor, Contract lock, Job, model call, and Sandboxes remain absent.
+The approved three candidate files were not modified. Historical Gate 3 records
+and `NOT_VERIFIED / BETA_GATE_VALIDATION / 0 / 0` classification are unchanged.
+
 ## Verified Work Contract V1 reality update (2026-09-03)
 
 One additional narrow server-side path is now evidence-backed:

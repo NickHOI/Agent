@@ -101,6 +101,7 @@ describe("Trust Foundation Supabase prerequisite migration", () => {
       "20260909160114_beta_gate_2_workspace_bootstrap_fix_v1.sql",
       "20260912094119_beta_gate_3_postgrest_retry_fix_v1.sql",
       "20260912170840_beta_gate_3_real_execution_v1.sql",
+      "20260914125905_gate_4a_canonical_execution_prerequisite_v1.sql",
     ]);
     expect(existsSync(path.join(
       migrationsDirectory,

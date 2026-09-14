@@ -34,7 +34,6 @@ import {
   BETA_GATE_3_EXECUTOR_ID,
   BETA_GATE_3_RECEIPT_TYPE,
   BetaGate3AuthorityGuard,
-  betaGate3LifecycleIds,
   betaGate3TaskProfile,
   createBetaGate3ExecutionBinding,
   type BetaGate3AuthorityOperation,
@@ -138,10 +137,8 @@ export class BetaGate3Orchestrator {
       remoteUrl: BETA_GATE_3_PRODUCT_REMOTE_URL,
       branch: BETA_GATE_3_PRODUCT_BRANCH,
     });
-    const lifecycleIds = betaGate3LifecycleIds();
     const prepared = await this.persistence.prepare({
       ...input,
-      ...lifecycleIds,
       sourceCommit: source.materializerCommitSha,
     });
     const binding = createBetaGate3ExecutionBinding(prepared);
@@ -707,6 +704,7 @@ function createReceiptDocument(input: {
     classification: {
       realJobClassification: "NOT_VERIFIED",
       reputationContribution: 0,
+      canonicalContribution: 0,
       reason: "BETA_GATE_VALIDATION",
     },
     issuedAt: new Date().toISOString(),
